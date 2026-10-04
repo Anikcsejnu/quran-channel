@@ -61,8 +61,9 @@ Make the Arabic, English or Bangla text bigger or smaller, from 50% to 200% (the
 node make-video.js --surah 112 --size-arabic 1.3 --size-english 0.9 --size-bangla 1.2
 ```
 
-Long verses are still shrunk to fit the screen. Making one language bigger mostly changes how the space is shared
-between the three languages, so the effect is strongest on short verses.
+Your sizes are used as-is whenever the verse fits on screen. Text is only shrunk when a verse would otherwise
+overflow (the renderer estimates the wrapped height of all three languages), so very long verses such as
+Ayat al-Kursi or 2:282 may not get bigger than the screen allows.
 
 ## 1. Set up your channel branding — `channel.json`
 

@@ -47,8 +47,9 @@ const FONT_FILES = {
 };
 
 const FORMATS = {
-  long:  { w: 1920, h: 1080, orientation: 'landscape', ar: 112, en: 44, bn: 48, header: 34, margin: 160, budget: 380, ui: 1 },
-  short: { w: 1080, h: 1920, orientation: 'portrait',  ar: 128, en: 54, bn: 60, header: 44, margin: 70,  budget: 440, ui: 1.15 },
+  // fill = share of the frame height the verse block may use (Shorts keep clear of YouTube's on-screen buttons)
+  long:  { w: 1920, h: 1080, orientation: 'landscape', ar: 112, en: 44, bn: 48, header: 34, margin: 160, fill: 0.8, ui: 1 },
+  short: { w: 1080, h: 1920, orientation: 'portrait',  ar: 128, en: 54, bn: 60, header: 44, margin: 70,  fill: 0.72, ui: 1.15 },
 };
 
 const DEFAULT_CHANNEL = {
@@ -350,13 +351,30 @@ function resolveSizes(channel, args) {
   return out;
 }
 
-// Font size multiplier for a verse: shrinks long verses so all three languages fit on screen.
-// The user's size scales count towards the space used, so bigger text on a long verse can't overflow.
+// Average character width (in units of font size) and line height, measured from libass renders of
+// the caption fonts. Arabic is per base letter: harakat and other marks take no horizontal space.
+const FONT_METRICS = { arabic: 0.123, english: 0.28, bangla: 0.245, lineHeight: 1.04, wrapSlack: 1.08 };
+const ARABIC_MARKS = /[ؐ-ًؚ-ٰٟۖ-ۭ࣓-ࣿ]/g;
+// Blank-line gaps between the languages plus the reference label, in font-size units (see verseEvents)
+const VERSE_EXTRA_LINES = 24 + 14 + 20 + 28;
+
+// Font size multiplier for a verse. Estimates how many lines each language wraps to and shrinks only
+// when the whole block would not fit on screen, so the chosen text sizes are kept whenever there is room.
 function verseFit(c, fmt, size) {
-  const len = c.words.join(' ').length * 1.3 * size.arabic ** 2
-    + c.en.length * 0.5 * size.english ** 2
-    + c.bn.length * 0.5 * size.bangla ** 2;
-  return Math.max(0.42, Math.min(1, Math.sqrt(fmt.budget / len)));
+  const width = fmt.w - 2 * fmt.margin;
+  const room = fmt.h * fmt.fill;
+  const m = FONT_METRICS;
+  const blocks = [
+    [(c.words.join(' ') + ' ﴿٠﴾').replace(ARABIC_MARKS, '').length * m.arabic, fmt.ar * size.arabic],
+    [c.en.length * m.english, fmt.en * size.english],
+    [c.bn.length * m.bangla, fmt.bn * size.bangla],
+  ];
+  const height = k => blocks.reduce((h, [em, fs]) => {
+    const lines = Math.max(1, Math.ceil((em * fs * k * m.wrapSlack) / width));
+    return h + lines * m.lineHeight * fs * k;
+  }, 0) + VERSE_EXTRA_LINES * m.lineHeight * k;
+  for (let k = 1; k > 0.3; k -= 0.02) if (height(k) <= room) return k;
+  return 0.3;
 }
 
 function verseEvents(c, fmt, highlight, col, size) {
@@ -801,5 +819,6 @@ if (require.main === module) {
 
 module.exports = {
   RECITERS, TRANSLATIONS, TRANSLATION_NAMES, DEFAULT_COLORS, DEFAULT_SIZES, SIZE_RANGE, FORMATS, DEFAULT_CHANNEL,
-  FFMPEG, FFPROBE, MAX_REEL_CLIPS, DEFAULT_BACKGROUND, BG_LIMITS,
+  FFMPEG, FFPROBE, MAX_REEL_CLIPS, DEFAULT_BACKGROUND, BG_LIMITS, verseFit,
+  FONT_METRICS, VERSE_EXTRA_LINES,
 };

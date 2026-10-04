@@ -8,7 +8,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 const {
   RECITERS, TRANSLATIONS, TRANSLATION_NAMES, DEFAULT_COLORS, DEFAULT_SIZES, SIZE_RANGE, DEFAULT_CHANNEL,
-  FFMPEG, FFPROBE, MAX_REEL_CLIPS, DEFAULT_BACKGROUND, BG_LIMITS,
+  FFMPEG, FFPROBE, MAX_REEL_CLIPS, DEFAULT_BACKGROUND, BG_LIMITS, FORMATS, FONT_METRICS, VERSE_EXTRA_LINES,
 } = require('./make-video.js');
 const { execFile } = require('child_process');
 
@@ -351,6 +351,8 @@ async function api(req, res, url) {
       defaultColors: DEFAULT_COLORS,
       defaultSizes: DEFAULT_SIZES,
       defaultBackground: DEFAULT_BACKGROUND,
+      // Same layout numbers the renderer uses, so the live preview sizes text identically
+      layout: { formats: FORMATS, fontMetrics: FONT_METRICS, extraLines: VERSE_EXTRA_LINES },
       backgroundLimits: BG_LIMITS,
       sizeRange: SIZE_RANGE,
       channel: { ...DEFAULT_CHANNEL, ...readChannel() },

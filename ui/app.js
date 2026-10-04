@@ -76,11 +76,28 @@ const PRESETS = {
   Ivory: { arabic: '#FFFFFF', highlight: '#FFD24A', glow: '#C77700', english: '#E8E8E8', bangla: '#F5E6B8', reference: '#9A9A9A' },
 };
 
-// Mirrors FORMATS in make-video.js so the live preview matches the render layout
-const FORMATS = {
-  long: { w: 1920, h: 1080, ar: 112, en: 44, bn: 48, header: 34, margin: 160, budget: 380 },
-  short: { w: 1080, h: 1920, ar: 128, en: 54, bn: 60, header: 44, margin: 70, budget: 440 },
-};
+// Filled from /api/meta with the renderer's own layout numbers, so the live preview matches the render
+const FORMATS = {};
+let LAYOUT = null;
+const ARABIC_MARKS = /[ؐ-ًؚ-ٰٟۖ-ۭ࣓-ࣿ]/g;
+
+// Same calculation as verseFit() in make-video.js: keep the chosen sizes unless the verse would overflow
+function verseFit(words, en, bn, fmt, size) {
+  const m = LAYOUT.fontMetrics;
+  const width = fmt.w - 2 * fmt.margin;
+  const room = fmt.h * fmt.fill;
+  const blocks = [
+    [(words.join(' ') + ' ﴿٠﴾').replace(ARABIC_MARKS, '').length * m.arabic, fmt.ar * size.arabic],
+    [en.length * m.english, fmt.en * size.english],
+    [bn.length * m.bangla, fmt.bn * size.bangla],
+  ];
+  const height = k => blocks.reduce((h, [em, fs]) => {
+    const lines = Math.max(1, Math.ceil((em * fs * k * m.wrapSlack) / width));
+    return h + lines * m.lineHeight * fs * k;
+  }, 0) + LAYOUT.extraLines * m.lineHeight * k;
+  for (let k = 1; k > 0.3; k -= 0.02) if (height(k) <= room) return k;
+  return 0.3;
+}
 
 // ---------- State ----------
 
@@ -964,8 +981,12 @@ function renderStage() {
   const bn = verse ? verse.bn : '';
   // Same shrink rule as make-video.js
   const sz = state.sizes;
-  const len = words.join(' ').length * 1.3 * sz.arabic ** 2 + en.length * 0.5 * sz.english ** 2 + bn.length * 0.5 * sz.bangla ** 2;
-  const k = Math.max(0.42, Math.min(1, Math.sqrt(fmt.budget / len)));
+  const k = verseFit(words, en, bn, fmt, sz);
+  const fitNote = $('#sizeFitNote');
+  fitNote.textContent = verse && k < 0.99
+    ? `This verse is long — shown at ${Math.round(k * 100)}% of your sizes to fit`
+    : "Shrinks only if a verse wouldn't fit";
+  fitNote.style.color = verse && k < 0.99 ? 'var(--gold)' : '';
 
   const body = $('#stBody');
   body.style.padding = `0 ${px(fmt.margin)}`;
@@ -1379,6 +1400,8 @@ async function init() {
     toast(`Could not load data: ${e.message}`, 'error');
     return;
   }
+  LAYOUT = meta.layout;
+  Object.assign(FORMATS, meta.layout.formats);
 
   const pill = $('#ffmpegStatus');
   pill.classList.add(meta.ffmpeg ? 'ok' : 'bad');
