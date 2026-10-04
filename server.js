@@ -394,11 +394,13 @@ async function api(req, res, url) {
 
   if (route === 'POST /api/backgrounds/fetch') {
     const body = await readJson(req);
-    if (!body.key) return fail(res, 400, 'Pexels API key is required');
-    const args = ['--count', intIn(body.count || 3, 1, 15, 'Count')];
+    const providers = { pixabay: 'PIXABAY_API_KEY', pexels: 'PEXELS_API_KEY' };
+    const provider = providers[body.provider] ? body.provider : 'pixabay';
+    if (!body.key) return fail(res, 400, 'API key is required');
+    const args = ['--provider', provider, '--count', intIn(body.count || 3, 1, 15, 'Count')];
     if (body.query) args.push('--query', String(body.query).slice(0, 80));
     if (['landscape', 'portrait', 'both'].includes(body.orientation)) args.push('--orientation', body.orientation);
-    const j = startJob('backgrounds', 'fetch-backgrounds.js', args, { PEXELS_API_KEY: String(body.key) });
+    const j = startJob('backgrounds', 'fetch-backgrounds.js', args, { [providers[provider]]: String(body.key) });
     return send(res, 200, { job: publicJob(j) });
   }
 
@@ -419,6 +421,15 @@ const server = http.createServer(async (req, res) => {
   } catch (e) {
     if (!res.headersSent) fail(res, e.status || 500, e.message);
   }
+});
+
+server.on('error', e => {
+  if (e.code === 'EADDRINUSE') {
+    console.error(`\n  Port ${PORT} is already in use — the studio may already be running at http://localhost:${PORT}`);
+    console.error(`  Stop the other instance, or start on another port:  $env:PORT=4174; npm start\n`);
+    process.exit(1);
+  }
+  throw e;
 });
 
 server.listen(PORT, HOST, () => {

@@ -771,17 +771,39 @@ $('#clipGrid').addEventListener('click', async e => {
 });
 bindSegmented($('#bgFilter'), v => { bgFilter = v; renderClips(); });
 
-$('#pexelsKey').value = store.get('qvs-pexels-key', '');
-$('#pexelsKey').addEventListener('change', e => store.set('qvs-pexels-key', e.target.value.trim()));
+const PROVIDER_INFO = {
+  pixabay: {
+    label: 'Pixabay', link: 'https://pixabay.com/api/docs/',
+    note: 'Stored only in this browser. Pixabay has few vertical clips, so Shorts may use centre-cropped landscape clips.',
+  },
+  pexels: {
+    label: 'Pexels', link: 'https://www.pexels.com/api/',
+    note: 'Stored only in this browser. Pexels has paused new API keys — use this only if you already have one.',
+  },
+};
+let provider = store.get('qvs-bg-provider', 'pixabay');
+const keyStore = () => `qvs-${provider}-key`;
+
+function applyProvider() {
+  const info = PROVIDER_INFO[provider];
+  setSegmented($('#providerSeg'), provider);
+  $('#providerKeyLabel').textContent = `${info.label} API key`;
+  $('#providerKeyLink').href = info.link;
+  $('#providerNote').textContent = info.note;
+  $('#pexelsKey').value = store.get(keyStore(), '');
+}
+bindSegmented($('#providerSeg'), v => { provider = v; store.set('qvs-bg-provider', v); applyProvider(); });
+applyProvider();
+$('#pexelsKey').addEventListener('change', e => store.set(keyStore(), e.target.value.trim()));
 
 $('#btnFetchBg').addEventListener('click', async () => {
   const key = $('#pexelsKey').value.trim();
-  if (!key) { toast('Add your Pexels API key first', 'error'); $('#pexelsKey').focus(); return; }
-  store.set('qvs-pexels-key', key);
+  if (!key) { toast(`Add your ${PROVIDER_INFO[provider].label} API key first`, 'error'); $('#pexelsKey').focus(); return; }
+  store.set(keyStore(), key);
   try {
     const { job } = await api('/api/backgrounds/fetch', {
       method: 'POST',
-      json: { key, query: $('#pexelsQuery').value.trim(), count: $('#pexelsCount').value, orientation: $('#pexelsOrientation').value },
+      json: { provider, key, query: $('#pexelsQuery').value.trim(), count: $('#pexelsCount').value, orientation: $('#pexelsOrientation').value },
     });
     showJob(job);
     pollJob();

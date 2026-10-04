@@ -28,7 +28,7 @@ Then open **http://localhost:4173**. The studio runs only on your computer.
 | **Create** | Pick surah and verses (searchable, with quick picks), reciter, translations, video or Shorts batch, background and features. Style the caption colours with presets or colour pickers, watch the **live preview** with the word highlight moving, or render an **exact preview frame** in about 2 seconds. Then render, with live progress, a log and cancel. |
 | **Library** | Watch rendered videos, copy the YouTube title and description in one click, download or delete. |
 | **Branding** | Channel name, handle, subscribe line, logo upload, intro/outro lengths, default caption colours. |
-| **Backgrounds** | Download clips from Pexels (your API key stays in your browser), upload your own, preview and remove clips. |
+| **Backgrounds** | Download clips from Pixabay or Pexels (your API key stays in your browser), upload your own, preview and remove clips. |
 
 Everything the studio does is also available from the command line (below).
 
@@ -66,13 +66,19 @@ node make-video.js --surah 1 --from 5 --still preview.png   # one frame, to chec
 
 ## 2. Add background videos (optional)
 
-Get a free Pexels API key at https://www.pexels.com/api/, then:
+Get a free **Pixabay** API key (sign up, then find it at https://pixabay.com/api/docs/), then:
 
 ```powershell
-$env:PEXELS_API_KEY = "your_key"
+$env:PIXABAY_API_KEY = "your_key"
 node fetch-backgrounds.js                                   # mosques, Islamic architecture, desert, sky, ocean…
 node fetch-backgrounds.js --query "masjid nabawi" --count 5 --orientation portrait
 ```
+
+Pixabay has few vertical clips, so Shorts may use landscape clips (centre-cropped automatically).
+Already have a Pexels key? Use `--provider pexels` with `$env:PEXELS_API_KEY` (Pexels has paused new keys).
+
+No API key at all? Download clips by hand from pixabay.com or pexels.com and drop them into the Studio's
+**Backgrounds → Upload your own** (or into the `backgrounds/landscape` / `backgrounds/portrait` folders).
 
 Clips go into `backgrounds/landscape/` and `backgrounds/portrait/` (for Shorts), with attribution saved to
 `backgrounds/credits.json` and added to each video description automatically.
@@ -120,6 +126,6 @@ short summary from Quran.com (Tafhim al-Qur'an).
 ## Sources
 - Text, translations, recitation audio and word timings: [Quran.com API](https://api.quran.com)
 - Fallback verse audio: [EveryAyah.com](https://everyayah.com)
-- Background footage: [Pexels](https://www.pexels.com) (free to use, attribution included)
+- Background footage: [Pixabay](https://pixabay.com) or [Pexels](https://www.pexels.com) (free to use, attribution included)
 
 Downloads are cached in `cache/`, so re-rendering is fast.

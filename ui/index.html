@@ -342,11 +342,16 @@
 
       <div class="bg-grid">
         <div class="card">
-          <div class="card-head"><h2>Download from Pexels</h2><span class="badge">Free</span></div>
-          <label class="label" for="pexelsKey">Pexels API key
-            <a class="hint link" href="https://www.pexels.com/api/" target="_blank" rel="noopener">Get a free key ↗</a></label>
+          <div class="card-head"><h2>Download stock footage</h2><span class="badge">Free</span></div>
+          <label class="label">Provider</label>
+          <div class="segmented" id="providerSeg">
+            <button data-value="pixabay" class="active">Pixabay</button>
+            <button data-value="pexels">Pexels</button>
+          </div>
+          <label class="label" for="pexelsKey"><span id="providerKeyLabel">Pixabay API key</span>
+            <a class="hint link" id="providerKeyLink" href="https://pixabay.com/api/docs/" target="_blank" rel="noopener">Get a free key ↗</a></label>
           <input type="password" id="pexelsKey" placeholder="Paste your API key" autocomplete="off">
-          <p class="field-note">Stored only in this browser.</p>
+          <p class="field-note" id="providerNote">Stored only in this browser.</p>
           <label class="label" for="pexelsQuery">Search</label>
           <input id="pexelsQuery" placeholder="Empty = mosques, Islamic architecture, desert, sky, ocean…">
           <div class="row-2">
