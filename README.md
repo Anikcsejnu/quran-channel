@@ -7,6 +7,7 @@ Generates YouTube videos and Shorts of Quran recitation with synced captions:
 - **Background videos** (Islamic architecture, nature…) cycled with cross-fades
 - **Batch mode**: one Short per verse of a surah, each with its own YouTube description
 - **Custom caption colours**: Arabic text, highlighted word, glow, English, Bangla, verse reference
+- **Adjustable text size** for the Arabic verse and each translation
 - **Studio**: a local web UI for all of the above
 
 ## Requirements
@@ -49,6 +50,19 @@ Override per run with `--color-<name> "#RRGGBB"`:
 node make-video.js --surah 67 --color-highlight "#7CFFC4" --color-glow "#00A86B"
 node make-video.js --surah 1 --from 5 --still preview.png   # one frame, to check colours quickly
 ```
+
+## Text size
+
+Make the Arabic, English or Bangla text bigger or smaller, from 50% to 200% (the Studio has sliders under
+**Caption style → Text size**). Saved defaults live in `channel.json` under `"fontScale"`; override per run with
+`--size-<name>` (1 = 100%):
+
+```bash
+node make-video.js --surah 112 --size-arabic 1.3 --size-english 0.9 --size-bangla 1.2
+```
+
+Long verses are still shrunk to fit the screen. Making one language bigger mostly changes how the space is shared
+between the three languages, so the effect is strongest on short verses.
 
 ## 1. Set up your channel branding — `channel.json`
 

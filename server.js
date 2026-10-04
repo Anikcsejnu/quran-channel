@@ -6,7 +6,9 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
-const { RECITERS, TRANSLATIONS, TRANSLATION_NAMES, DEFAULT_COLORS, DEFAULT_CHANNEL, FFMPEG } = require('./make-video.js');
+const {
+  RECITERS, TRANSLATIONS, TRANSLATION_NAMES, DEFAULT_COLORS, DEFAULT_SIZES, SIZE_RANGE, DEFAULT_CHANNEL, FFMPEG,
+} = require('./make-video.js');
 
 const ROOT = __dirname;
 const PORT = parseInt(process.env.PORT || '4173', 10);
@@ -189,6 +191,14 @@ function intIn(v, min, max, name) {
   return String(n);
 }
 
+function validSize(v, name) {
+  const n = parseFloat(v);
+  if (!(n >= SIZE_RANGE[0] && n <= SIZE_RANGE[1])) {
+    throw Object.assign(new Error(`${name} size must be between ${SIZE_RANGE[0] * 100}% and ${SIZE_RANGE[1] * 100}%`), { status: 400 });
+  }
+  return String(Math.round(n * 100) / 100);
+}
+
 function buildArgs(o) {
   const bad = msg => Object.assign(new Error(msg), { status: 400 });
   const a = ['--surah', intIn(o.surah, 1, 114, 'Surah')];
@@ -221,6 +231,10 @@ function buildArgs(o) {
       a.push(`--color-${k}`, c);
     }
   }
+  for (const k of Object.keys(DEFAULT_SIZES)) {
+    const s = o.sizes && o.sizes[k];
+    if (s !== undefined && s !== null) a.push(`--size-${k}`, validSize(s, k));
+  }
   return a;
 }
 
@@ -240,6 +254,8 @@ async function api(req, res, url) {
         bn: Object.keys(TRANSLATIONS.bn).map(id => ({ id, name: TRANSLATION_NAMES[id] })),
       },
       defaultColors: DEFAULT_COLORS,
+      defaultSizes: DEFAULT_SIZES,
+      sizeRange: SIZE_RANGE,
       channel: { ...DEFAULT_CHANNEL, ...readChannel() },
       surahs: chapters.chapters.map(c => ({
         id: c.id, name: c.name_simple, arabic: c.name_arabic, meaning: c.translated_name.name,
@@ -278,6 +294,10 @@ async function api(req, res, url) {
     if (body.colors) {
       ch.colors = {};
       for (const k of Object.keys(DEFAULT_COLORS)) if (HEX_RE.test(body.colors[k] || '')) ch.colors[k] = body.colors[k].toUpperCase();
+    }
+    if (body.fontScale) {
+      ch.fontScale = {};
+      for (const k of Object.keys(DEFAULT_SIZES)) ch.fontScale[k] = parseFloat(validSize(body.fontScale[k] ?? DEFAULT_SIZES[k], k));
     }
     writeChannel(ch);
     return send(res, 200, { channel: { ...DEFAULT_CHANNEL, ...ch } });

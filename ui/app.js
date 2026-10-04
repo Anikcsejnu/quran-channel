@@ -95,7 +95,7 @@ const state = Object.assign({
   reciter: 'alafasy', en: 'saheeh', bn: 'taisirul',
   mode: 'single', format: 'long', groupSeconds: 0, bg: 'auto',
   highlight: true, intro: true, outro: true, watermark: true, bismillah: true,
-  colors: null, preview: 'live',
+  colors: null, sizes: null, preview: 'live',
 }, store.get('qvs-state', {}));
 state.preview = 'live';
 
@@ -110,7 +110,7 @@ function payload() {
     format: effectiveFormat(), batch: state.mode === 'batch', groupSeconds: state.groupSeconds,
     highlight: state.highlight, intro: state.intro, outro: state.outro,
     watermark: state.watermark, bismillah: state.bismillah,
-    bg: state.bg, colors: state.colors,
+    bg: state.bg, colors: state.colors, sizes: state.sizes,
   };
 }
 
@@ -372,15 +372,71 @@ $('#colorPresets').addEventListener('click', e => {
 $('#btnResetColors').addEventListener('click', () => {
   const base = { ...meta.defaultColors, ...(meta.channel.colors || {}) };
   Object.entries(base).forEach(([k, v]) => setColor(k, v));
-  toast('Colours reset to your channel default');
+  state.sizes = { ...meta.defaultSizes, ...(meta.channel.fontScale || {}) };
+  renderSizeControls();
+  onSizeChange();
+  toast('Style reset to your channel default');
 });
 $('#btnSaveColors').addEventListener('click', async () => {
   try {
-    const { channel } = await api('/api/channel', { method: 'PUT', json: { colors: state.colors } });
+    const { channel } = await api('/api/channel', { method: 'PUT', json: { colors: state.colors, fontScale: state.sizes } });
     meta.channel = channel;
     renderDefaultSwatches();
-    toast('Saved as channel default colours');
+    renderSizeControls();
+    toast('Saved colours and text sizes as channel default');
   } catch (e) { toast(e.message, 'error'); }
+});
+
+// ---------- Text size ----------
+
+const SIZE_FIELDS = [
+  ['arabic', 'Arabic', 'Verse text'],
+  ['english', 'English', 'Translation'],
+  ['bangla', 'Bangla', 'Translation'],
+];
+const SIZE_STEP = 0.05;
+
+function renderSizeControls() {
+  const [min, max] = meta.sizeRange;
+  const saved = { ...meta.defaultSizes, ...(meta.channel.fontScale || {}) };
+  $('#sizeList').innerHTML = SIZE_FIELDS.map(([key, label, sub]) => {
+    const v = state.sizes[key];
+    return `
+    <div class="size-row" data-size="${key}">
+      <span class="name">${esc(label)}<small>${esc(sub)}</small></span>
+      <button class="icon-btn sm" data-step="-1" aria-label="Smaller ${esc(label)} text" title="Smaller">−</button>
+      <input type="range" min="${min}" max="${max}" step="${SIZE_STEP}" value="${v}" aria-label="${esc(label)} text size">
+      <button class="icon-btn sm" data-step="1" aria-label="Larger ${esc(label)} text" title="Larger">+</button>
+      <span class="val ${v !== saved[key] ? 'changed' : ''}" title="${v !== saved[key] ? 'Different from your saved default' : ''}">${Math.round(v * 100)}%</span>
+    </div>`;
+  }).join('');
+}
+
+// Update one row in place (keeps keyboard focus on the slider or button)
+function setSize(key, value) {
+  const [min, max] = meta.sizeRange;
+  const v = Math.round(Math.min(max, Math.max(min, value)) * 100) / 100;
+  state.sizes[key] = v;
+  const row = $(`.size-row[data-size="${key}"]`);
+  const saved = { ...meta.defaultSizes, ...(meta.channel.fontScale || {}) }[key];
+  $('input[type="range"]', row).value = v;
+  const val = $('.val', row);
+  val.textContent = `${Math.round(v * 100)}%`;
+  val.classList.toggle('changed', v !== saved);
+  val.title = v !== saved ? 'Different from your saved default' : '';
+  onSizeChange();
+}
+
+const onSizeChange = () => { saveState(); renderStage(); invalidateFrame(); };
+
+$('#sizeList').addEventListener('input', e => {
+  if (e.target.type === 'range') setSize(e.target.closest('[data-size]').dataset.size, parseFloat(e.target.value));
+});
+$('#sizeList').addEventListener('click', e => {
+  const b = e.target.closest('[data-step]');
+  if (!b) return;
+  const key = b.closest('[data-size]').dataset.size;
+  setSize(key, state.sizes[key] + SIZE_STEP * +b.dataset.step);
 });
 
 function renderDefaultSwatches() {
@@ -419,14 +475,15 @@ function renderStage() {
   const en = verse ? verse.en : 'Loading verse…';
   const bn = verse ? verse.bn : '';
   // Same shrink rule as make-video.js
-  const len = words.join(' ').length * 1.3 + en.length * 0.5 + bn.length * 0.5;
+  const sz = state.sizes;
+  const len = words.join(' ').length * 1.3 * sz.arabic ** 2 + en.length * 0.5 * sz.english ** 2 + bn.length * 0.5 * sz.bangla ** 2;
   const k = Math.max(0.42, Math.min(1, Math.sqrt(fmt.budget / len)));
 
   const body = $('#stBody');
   body.style.padding = `0 ${px(fmt.margin)}`;
 
   const ar = $('#stArabic');
-  ar.style.fontSize = px(fmt.ar * k);
+  ar.style.fontSize = px(fmt.ar * sz.arabic * k);
   ar.style.color = c.arabic;
   ar.innerHTML = words.map((w, i) => `<span class="w" data-i="${i}">${esc(w)}</span>`).join(' ')
     + (verse ? ` <span class="num">﴿${toArabicDigits(verse.number)}﴾</span>` : '');
@@ -434,10 +491,10 @@ function renderStage() {
 
   const enEl = $('#stEnglish');
   enEl.textContent = en;
-  enEl.style.cssText = `font-size:${px(fmt.en * k)};color:${c.english};margin-top:${px(24 * k)}`;
+  enEl.style.cssText = `font-size:${px(fmt.en * sz.english * k)};color:${c.english};margin-top:${px(24 * k)}`;
   const bnEl = $('#stBangla');
   bnEl.textContent = bn;
-  bnEl.style.cssText = `font-size:${px(fmt.bn * k)};color:${c.bangla};margin-top:${px(14 * k)}`;
+  bnEl.style.cssText = `font-size:${px(fmt.bn * sz.bangla * k)};color:${c.bangla};margin-top:${px(14 * k)}`;
   const ref = $('#stRef');
   ref.textContent = verse ? `${s.name} ${verse.key}` : '';
   ref.style.cssText = `font-size:${px(28 * k)};color:${c.reference};margin-top:${px(20 * k)}`;
@@ -839,6 +896,7 @@ async function init() {
   pill.title = meta.ffmpeg ? '' : 'Install with: winget install Gyan.FFmpeg';
 
   state.colors = { ...meta.defaultColors, ...(meta.channel.colors || {}), ...(state.colors || {}) };
+  state.sizes = { ...meta.defaultSizes, ...(meta.channel.fontScale || {}), ...(state.sizes || {}) };
   if (!surahOf(state.surah)) state.surah = 1;
 
   fillSelect($('#reciter'), meta.reciters.map(r => ({ id: r.id, name: r.wordTimings ? r.name : `${r.name} (no highlighting)` })), state.reciter);
@@ -852,6 +910,7 @@ async function init() {
 
   fillBranding();
   renderColorControls();
+  renderSizeControls();
   syncPassage();
 
   backgrounds = (await api('/api/backgrounds').catch(() => ({ items: [] }))).items;

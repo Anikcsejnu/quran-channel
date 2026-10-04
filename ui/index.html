@@ -211,12 +211,17 @@
 
           <div class="card">
             <div class="card-head">
-              <h2>Caption colours</h2>
+              <h2>Caption style</h2>
               <div class="head-btns">
-                <button class="btn ghost sm" id="btnResetColors">Reset</button>
-                <button class="btn ghost sm" id="btnSaveColors">Save as default</button>
+                <button class="btn ghost sm" id="btnResetColors" title="Reset colours and sizes to your saved default">Reset</button>
+                <button class="btn ghost sm" id="btnSaveColors" title="Save colours and sizes as your channel default">Save as default</button>
               </div>
             </div>
+
+            <div class="subhead"><h3>Text size</h3><span class="hint">Long verses still shrink to fit the screen</span></div>
+            <div class="size-list" id="sizeList"></div>
+
+            <div class="subhead"><h3>Colours</h3></div>
             <div class="presets" id="colorPresets"></div>
             <div class="color-list" id="colorList"></div>
           </div>

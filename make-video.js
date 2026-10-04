@@ -69,7 +69,11 @@ const DEFAULT_COLORS = {
   reference: '#A0A0A0', // "Al-Fatihah 1:5" label
 };
 
-const VIDEO_RE =/\.(mp4|mov|webm|mkv)$/i;
+// Caption text size multipliers (1 = 100%). Override in channel.json "fontScale" or with --size-<name>
+const DEFAULT_SIZES = { arabic: 1, english: 1, bangla: 1 };
+const SIZE_RANGE = [0.5, 2];
+
+const VIDEO_RE = /\.(mp4|mov|webm|mkv)$/i;
 const IMAGE_RE = /\.(jpe?g|png|webp|bmp)$/i;
 
 const BOOL_FLAGS = new Set(['no-bismillah', 'no-highlight', 'no-intro', 'no-outro', 'no-watermark', 'batch']);
@@ -100,6 +104,7 @@ function parseArgs() {
   --no-intro / --no-outro / --no-watermark
   --no-bismillah          don't prepend Bismillah audio
   --color-<name> <#hex>   ${Object.keys(DEFAULT_COLORS).join(', ')} (e.g. --color-highlight #00FFAA)
+  --size-<name> <n>       text size for ${Object.keys(DEFAULT_SIZES).join(', ')}: ${SIZE_RANGE[0]}–${SIZE_RANGE[1]} (1 = 100%, e.g. --size-arabic 1.3)
   --still <file.png>      render one preview frame of the first verse instead of a video
   --out <file>            output mp4 path (single video only)
 
@@ -324,21 +329,39 @@ function resolveColors(channel, args) {
   return out;
 }
 
-function verseEvents(c, fmt, highlight, col) {
+// Defaults < channel.json "fontScale" < --size-<name> flags (1 = 100%)
+function resolveSizes(channel, args) {
+  const out = {};
+  for (const k of Object.keys(DEFAULT_SIZES)) {
+    const v = parseFloat(args[`size-${k}`] ?? (channel.fontScale || {})[k] ?? DEFAULT_SIZES[k]);
+    if (!(v >= SIZE_RANGE[0] && v <= SIZE_RANGE[1])) throw new Error(`--size-${k} must be between ${SIZE_RANGE[0]} and ${SIZE_RANGE[1]}`);
+    out[k] = v;
+  }
+  return out;
+}
+
+// Font size multiplier for a verse: shrinks long verses so all three languages fit on screen.
+// The user's size scales count towards the space used, so bigger text on a long verse can't overflow.
+function verseFit(c, fmt, size) {
+  const len = c.words.join(' ').length * 1.3 * size.arabic ** 2
+    + c.en.length * 0.5 * size.english ** 2
+    + c.bn.length * 0.5 * size.bangla ** 2;
+  return Math.max(0.42, Math.min(1, Math.sqrt(fmt.budget / len)));
+}
+
+function verseEvents(c, fmt, highlight, col, size) {
   const AR_BASE = `\\c${col.arabic}\\3c&H00000000&\\bord2\\blur0`;
   const AR_HIGHLIGHT = `\\c${col.highlight}\\3c${col.glow}\\bord3\\blur4`;
-  // Shrink long verses so all three languages fit on screen
-  const len = c.words.join(' ').length * 1.3 + c.en.length * 0.5 + c.bn.length * 0.5;
-  const k = Math.max(0.42, Math.min(1, Math.sqrt(fmt.budget / len)));
+  const k = verseFit(c, fmt, size);
   const fs = n => Math.round(n * k);
   // A blank line of a given size, used as vertical spacing between the languages
   const gap = n => `\\N{\\fs${fs(n)}}\\h\\N`;
   const marker = c.num ? ` \uFD3F${c.num.toLocaleString('ar-EG')}\uFD3E` : '';
   const body = active =>
-    `{\\fnAmiri Quran\\fs${fs(fmt.ar)}${AR_BASE}}` +
+    `{\\fnAmiri Quran\\fs${fs(fmt.ar * size.arabic)}${AR_BASE}}` +
     rtl(c.words.map((w, i) => (i === active ? `{${AR_HIGHLIGHT}}${esc(w)}{${AR_BASE}}` : esc(w))).join(' ') + marker) +
-    `${gap(24)}{\\fnPoppins\\fs${fs(fmt.en)}\\c${col.english}\\bord2}${esc(c.en)}` +
-    `${gap(14)}{\\fnHind Siliguri\\fs${fs(fmt.bn)}\\c${col.bangla}\\bord2}${esc(c.bn)}` +
+    `${gap(24)}{\\fnPoppins\\fs${fs(fmt.en * size.english)}\\c${col.english}\\bord2}${esc(c.en)}` +
+    `${gap(14)}{\\fnHind Siliguri\\fs${fs(fmt.bn * size.bangla)}\\c${col.bangla}\\bord2}${esc(c.bn)}` +
     (c.label ? `${gap(20)}{\\fnPoppins\\fs${fs(28)}\\c${col.reference}\\bord1}${esc(c.label)}` : '');
 
   if (!highlight || !c.segs.length) return [{ start: c.start, end: c.end, text: `{\\fad(250,250)}${body(-1)}` }];
@@ -356,7 +379,7 @@ function verseEvents(c, fmt, highlight, col) {
   }));
 }
 
-function buildAss({ cues, fmt, data, reciter, channel, job, intro, outro, total, watermark, highlight, colors: col }) {
+function buildAss({ cues, fmt, data, reciter, channel, job, intro, outro, total, watermark, highlight, colors: col, sizes }) {
   const { w, h } = fmt;
   const u = n => Math.round(n * fmt.ui);
   const head = `[Script Info]
@@ -402,7 +425,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
   if (watermark && !channel.logo) add(0, intro, versesEnd, 'Watermark', esc(channel.handle || channel.name));
 
   for (const c of cues) {
-    for (const e of verseEvents(c, fmt, highlight, col)) add(1, e.start, Math.min(e.end, versesEnd), 'Verse', e.text);
+    for (const e of verseEvents(c, fmt, highlight, col, sizes)) add(1, e.start, Math.min(e.end, versesEnd), 'Verse', e.text);
   }
 
   if (outro > 0) {
@@ -500,7 +523,7 @@ async function renderVideo(job, ctx) {
   fs.writeFileSync(path.join(work, 'list.txt'),
     parts.map(p => `file '${p.replace(/\\/g, '/').replace(/'/g, "'\\''")}'`).join('\n'));
   fs.writeFileSync(path.join(work, 'subs.ass'), '\uFEFF' +
-    buildAss({ cues, fmt, data, reciter, channel, job, intro, outro, total, watermark, highlight, colors: ctx.colors }), 'utf8');
+    buildAss({ cues, fmt, data, reciter, channel, job, intro, outro, total, watermark, highlight, colors: ctx.colors, sizes: ctx.sizes }), 'utf8');
   // libass can't open fonts via a ../ path on Windows, so keep a copy beside subs.ass
   fs.cpSync(FONTS, path.join(work, 'fonts'), { recursive: true });
 
@@ -655,7 +678,7 @@ async function main() {
 
   const background = resolveBackground(args.bg, fmt, surah);
   console.log(`• Background: ${background.type === 'gradient' ? 'animated gradient' : path.basename(background.file)}`);
-  const ctx = { data, args, fmt, reciter, rec, bismillahRec, channel, background, colors: resolveColors(channel, args) };
+  const ctx = { data, args, fmt, reciter, rec, bismillahRec, channel, background, colors: resolveColors(channel, args), sizes: resolveSizes(channel, args) };
 
   const needsBismillah = args.bismillah && data.chapter.bismillah_pre;
   let jobs;
@@ -691,4 +714,4 @@ if (require.main === module) {
   main().catch(e => { console.error('\n✗', e.message); process.exit(1); });
 }
 
-module.exports = { RECITERS, TRANSLATIONS, TRANSLATION_NAMES, DEFAULT_COLORS, FORMATS, DEFAULT_CHANNEL, FFMPEG };
+module.exports = { RECITERS, TRANSLATIONS, TRANSLATION_NAMES, DEFAULT_COLORS, DEFAULT_SIZES, SIZE_RANGE, FORMATS, DEFAULT_CHANNEL, FFMPEG };
