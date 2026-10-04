@@ -69,7 +69,16 @@ node make-video.js --surah 18 --reciter sudais --bg my-folder   # different reci
 
 \* maher and dossary have no word timings, so highlighting is off for them.
 
-Each video gets a `.description.txt` (title, reciter, translators, background credits, hashtags) to paste into YouTube.
+## 4. YouTube title & description
+
+Each video gets two files next to it, ready to paste into YouTube Studio:
+- `.title.txt`: e.g. `Surah Al-Ikhlas | Mishary Rashid Alafasy | Arabic, English & Bangla Translation`
+- `.description.txt`: an introduction to the surah, then 📖 Surah · 📍 Juz & verses · 🕋 place of revelation ·
+  🎙️ reciter · 🌐 translators, your subscribe line (`subscribeLine` in `channel.json`), background credits and hashtags.
+
+The introduction comes from **`intros.json`**, keyed by surah (`"112"`) or by a specific verse/range (`"2:255"`, `"2:285-286"`).
+It includes intros for popular surahs; add or edit your own there. Surahs without an entry fall back to the
+short summary from Quran.com (Tafhim al-Qur'an).
 
 ## Sources
 - Text, translations, recitation audio and word timings: [Quran.com API](https://api.quran.com)

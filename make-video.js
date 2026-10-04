@@ -14,7 +14,7 @@ const OUT = path.join(ROOT, 'output');
 
 // qdc = Quran.com chapter recitation id (gapless audio + word timings); ea = EveryAyah.com folder (verse audio only)
 const RECITERS = {
-  alafasy:               { name: 'Mishari Rashid al-Afasy', qdc: 7, ea: 'Alafasy_128kbps' },
+  alafasy:               { name: 'Mishary Rashid Alafasy', qdc: 7, ea: 'Alafasy_128kbps' },
   abdulbasit:            { name: 'Abdul Basit Abdus Samad', qdc: 2, ea: 'Abdul_Basit_Murattal_192kbps' },
   'abdulbasit-mujawwad': { name: 'Abdul Basit Abdus Samad (Mujawwad)', qdc: 1 },
   sudais:                { name: 'Abdur-Rahman as-Sudais', qdc: 3, ea: 'Abdurrahmaan_As-Sudais_192kbps' },
@@ -32,6 +32,11 @@ const RECITERS = {
 const TRANSLATIONS = {
   en: { saheeh: 20, haleem: 85, usmani: 84, yusufali: 22 },
   bn: { taisirul: 161, mujibur: 163, rawai: 162, zakaria: 213 },
+};
+
+const TRANSLATION_NAMES = {
+  saheeh: 'Saheeh International', haleem: 'M.A.S. Abdel Haleem', usmani: 'Mufti Taqi Usmani', yusufali: 'Abdullah Yusuf Ali',
+  taisirul: 'Taisirul Quran', mujibur: 'Sheikh Mujibur Rahman', rawai: 'Rawai Al-bayan', zakaria: 'Dr. Abu Bakr Muhammad Zakaria',
 };
 
 const FONT_FILES = {
@@ -166,6 +171,7 @@ async function loadVerses(surah, enId, bnId) {
   for (const v of raw) {
     map.set(v.verse_number, {
       num: v.verse_number,
+      juz: v.juz_number,
       words: v.words.filter(w => w.char_type_name === 'word').map(w => w.text_uthmani),
       en: tr(v, enId),
       bn: tr(v, bnId),
@@ -180,6 +186,8 @@ async function loadSurah(surah, args) {
   const { chapter } = await getJson(`https://api.quran.com/api/v4/chapters/${surah}`, `chapter-${surah}.json`);
   const { chapter: chapterBn } = await getJson(`https://api.quran.com/api/v4/chapters/${surah}?language=bn`, `chapter-${surah}-bn.json`);
   chapter.name_bn = chapterBn.translated_name.name;
+  const { chapter_info: info } = await getJson(`https://api.quran.com/api/v4/chapters/${surah}/info`, `chapter-info-${surah}.json`);
+  chapter.info = info;
   const verses = await loadVerses(surah, enId, bnId);
   const fatiha = surah === 1 ? verses : await loadVerses(1, enId, bnId);
   return { surah, chapter, verses, bismillahVerse: fatiha.get(1) };
@@ -509,29 +517,67 @@ async function renderVideo(job, ctx) {
   return outFile;
 }
 
+// Opening paragraph: intros.json (most specific key first, e.g. "2:255" → "2"), else Quran.com's chapter summary
+function surahIntro(data, job) {
+  const file = path.join(ROOT, 'intros.json');
+  const intros = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {};
+  const exact = job.from === job.to ? `${data.surah}:${job.from}` : `${data.surah}:${job.from}-${job.to}`;
+  if (intros[exact]) return intros[exact];
+  if (intros[data.surah]) return intros[data.surah];
+  const info = data.chapter.info;
+  if (!info || !info.short_text) return '';
+  const source = (info.source || '').split(' - ')[0];
+  return `${info.short_text.trim()}${source ? ` (${source})` : ''}`;
+}
+
 function writeDescription(outFile, job, ctx) {
   const { data, args, reciter, channel, background } = ctx;
   const { chapter } = data;
+  const whole = job.from === 1 && job.to === chapter.verses_count;
   const ref = job.from === job.to ? `${data.surah}:${job.from}` : `${data.surah}:${job.from}-${job.to}`;
+  const juzList = [...new Set([job.from, job.to].map(n => data.verses.get(n).juz))];
+  const place = chapter.revelation_place === 'madinah' ? 'Madinah (Madani)' : 'Makkah (Makki)';
+  const surahName = `${chapter.name_simple} (${chapter.translated_name.name})`;
+
   const credits = [];
   const creditsFile = path.join(ROOT, 'backgrounds', 'credits.json');
   if (background.used && fs.existsSync(creditsFile)) {
     const map = JSON.parse(fs.readFileSync(creditsFile, 'utf8'));
-    for (const f of background.used) if (map[path.basename(f)]) credits.push(`  ${map[path.basename(f)]}`);
+    for (const f of background.used) if (map[path.basename(f)]) credits.push(map[path.basename(f)]);
   }
+
+  const intro = surahIntro(data, job);
   const desc = [
-    `Surah ${chapter.name_simple} (${chapter.name_arabic}) ${ref} — ${chapter.translated_name.name} | সূরা ${chapter.name_bn}`,
+    ...(intro ? [intro, ''] : []),
+    `📖 Surah: ${surahName} · ${chapter.name_arabic}`,
     '',
-    `Recitation: ${reciter.name}`,
-    `English translation: ${args.en} · Bangla translation: ${args.bn} (Quran.com)`,
-    ...(credits.length ? ['', 'Background footage:', ...credits] : []),
+    `📍 Juz: ${juzList.join('–')} | Total Verses: ${chapter.verses_count}` + (whole ? '' : ` | This video: ${ref}`),
     '',
-    channel.handle ? `Subscribe: ${channel.handle}` : `Subscribe to ${channel.name}`,
+    `🕋 Revealed in: ${place}`,
     '',
-    `#Quran #Surah${chapter.name_simple.replace(/[^A-Za-z]/g, '')} #কুরআন #QuranWithBanglaTranslation` +
-      (args.format === 'short' ? ' #Shorts' : ''),
+    `🎙️ Reciter: ${reciter.name}`,
+    '',
+    `🌐 Translations: English — ${TRANSLATION_NAMES[args.en] || args.en} · Bangla — ${TRANSLATION_NAMES[args.bn] || args.bn}`,
+    '',
+    channel.subscribeLine || 'Subscribe for daily peaceful Quranic verses with verified English and Bengali translations.',
+    ...(channel.handle ? [`👉 ${channel.handle}`] : []),
+    '',
+    'Text, translations & recitation timing: Quran.com',
+    ...(credits.length ? ['', '🎬 Background footage:', ...credits] : []),
+    '',
+    [
+      '#Quran', `#Surah${chapter.name_simple.replace(/[^A-Za-z]/g, '')}`, '#QuranRecitation',
+      '#QuranWithBanglaTranslation', '#কুরআন', '#Islam', `#${reciter.name.split(' ').pop()}`,
+      ...(args.format === 'short' ? ['#Shorts'] : []),
+    ].join(' '),
   ].join('\n');
   fs.writeFileSync(outFile.replace(/\.mp4$/, '.description.txt'), desc, 'utf8');
+
+  // YouTube titles are limited to 100 characters
+  const title = args.format === 'short'
+    ? `Surah ${chapter.name_simple} ${ref} | ${chapter.translated_name.name} ✨ #Shorts`
+    : `Surah ${chapter.name_simple} ${whole ? '' : `(${ref}) `}| ${reciter.name} | Arabic, English & Bangla Translation`;
+  fs.writeFileSync(outFile.replace(/\.mp4$/, '.title.txt'), title.slice(0, 100), 'utf8');
 }
 
 // ---------- Main ----------

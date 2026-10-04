@@ -1,7 +1,8 @@
 {
-  "name": "My Quran Channel",
-  "handle": "@MyQuranChannel",
+  "name": "Al-Bayaan Quran",
+  "handle": "@Al-BayaanQuran",
   "logo": "",
+  "subscribeLine": "Subscribe for daily peaceful Quranic verses with verified English and Bengali translations.",
   "intro": { "long": 5, "short": 1.5 },
   "outro": { "long": 6, "short": 2.5 }
 }
