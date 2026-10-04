@@ -12,7 +12,10 @@ const CACHE = path.join(ROOT, 'cache');
 const FONTS = path.join(ROOT, 'fonts');
 const OUT = path.join(ROOT, 'output');
 
-// qdc = Quran.com chapter recitation id (gapless audio + word timings); ea = EveryAyah.com folder (verse audio only)
+// Audio sources, in order of preference:
+//   qdc = Quran.com v4 chapter recitation id (gapless audio + word timings)
+//   cdn = Quran.com's newer audio API reciter id (gapless audio + word timings, has reciters v4 lacks)
+//   ea  = EveryAyah.com folder (one file per verse, no word timings)
 const RECITERS = {
   alafasy:               { name: 'Mishary Rashid Alafasy', qdc: 7, ea: 'Alafasy_128kbps' },
   abdulbasit:            { name: 'Abdul Basit Abdus Samad', qdc: 2, ea: 'Abdul_Basit_Murattal_192kbps' },
@@ -24,9 +27,12 @@ const RECITERS = {
   minshawy:              { name: 'Mohamed Siddiq al-Minshawi', qdc: 9, ea: 'Minshawy_Murattal_128kbps' },
   'minshawy-mujawwad':   { name: 'Mohamed Siddiq al-Minshawi (Mujawwad)', qdc: 8 },
   shuraym:               { name: "Sa'ud ash-Shuraym", qdc: 10, ea: 'Saood_ash-Shuraym_128kbps' },
+  dossary:               { name: 'Yasser ad-Dossary', cdn: 97, ea: 'Yasser_Ad-Dussary_128kbps' },
+  tunaiji:               { name: 'Khalifah Al Tunaiji', cdn: 161 },
   maher:                 { name: 'Maher al-Muaiqly', ea: 'MaherAlMuaiqly128kbps' },
-  dossary:               { name: 'Yasser ad-Dossary', ea: 'Yasser_Ad-Dussary_128kbps' },
 };
+
+const hasWordTimings = r => !!(r.qdc || r.cdn);
 
 // Quran.com translation resource ids
 const TRANSLATIONS = {
@@ -248,13 +254,26 @@ async function loadSurah(surah, args) {
 
 // Returns per-verse timings (and word segments when available) for the whole surah.
 async function loadRecitation(surah, reciter) {
+  let af, timestamps, audioDir;
   if (reciter.qdc) {
-    const { audio_file: af } = await getJson(
+    ({ audio_file: af } = await getJson(
       `https://api.quran.com/api/v4/chapter_recitations/${reciter.qdc}/${surah}?segments=true`,
-      `recitation-${reciter.qdc}-${surah}.json`);
-    const mp3 = await download(af.audio_url, path.join(CACHE, 'audio', `qdc-${reciter.qdc}`, `${surah}.mp3`));
+      `recitation-${reciter.qdc}-${surah}.json`));
+    timestamps = af.timestamps;
+    audioDir = `qdc-${reciter.qdc}`;
+  } else if (reciter.cdn) {
+    // Same data shape as v4, under different field names
+    const j = await getJson(
+      `https://api.qurancdn.com/api/qdc/audio/reciters/${reciter.cdn}/audio_files?chapter=${surah}&segments=true`,
+      `recitation-cdn-${reciter.cdn}-${surah}.json`);
+    af = j.audio_files[0];
+    timestamps = af.verse_timings;
+    audioDir = `cdn-${reciter.cdn}`;
+  }
+  if (af) {
+    const mp3 = await download(af.audio_url, path.join(CACHE, 'audio', audioDir, `${surah}.mp3`));
     const timings = new Map();
-    for (const t of af.timestamps) {
+    for (const t of timestamps) {
       const num = parseInt(t.verse_key.split(':')[1], 10);
       timings.set(num, {
         from: t.timestamp_from / 1000,
@@ -847,7 +866,7 @@ async function main() {
   const from = parseInt(args.from || 1, 10);
   const to = Math.min(parseInt(args.to || data.chapter.verses_count, 10), data.chapter.verses_count);
 
-  console.log(`• Recitation: ${reciter.name}${reciter.qdc ? ' (with word timings)' : ' (no word timings — highlighting off)'}`);
+  console.log(`• Recitation: ${reciter.name}${hasWordTimings(reciter) ? ' (with word timings)' : ' (no word timings — highlighting off)'}`);
   const rec = await loadRecitation(surah, reciter);
   const bismillahRec = surah === 1 ? rec : await loadRecitation(1, reciter);
 
@@ -894,5 +913,5 @@ if (require.main === module) {
 module.exports = {
   RECITERS, TRANSLATIONS, TRANSLATION_NAMES, DEFAULT_COLORS, DEFAULT_SIZES, SIZE_RANGE, FORMATS, DEFAULT_CHANNEL,
   FFMPEG, FFPROBE, MAX_REEL_CLIPS, DEFAULT_BACKGROUND, BG_LIMITS, verseFit,
-  FONT_METRICS, VERSE_GAPS, REFERENCE_SIZE, WATERMARK_SIZE, emRatio, surahNameBn, buildTitle,
+  FONT_METRICS, VERSE_GAPS, REFERENCE_SIZE, WATERMARK_SIZE, emRatio, surahNameBn, buildTitle, hasWordTimings,
 };

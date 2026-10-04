@@ -181,7 +181,7 @@ flowchart TD
 
 1. **Fonts** — Amiri Quran (Arabic), Poppins (English, header), Hind Siliguri (Bangla) are downloaded from Google Fonts on first run. Their metrics are read from the font files (see [Text size](#text-size-and-fitting)).
 2. **Quran data** — from the Quran.com API: each verse's Uthmani words, the chosen English and Bangla translations (footnote markers removed), juz, and surah info (Arabic name, meaning, place of revelation, summary).
-3. **Recitation** — for reciters with word timings, Quran.com's gapless **chapter audio** plus **timestamps for every verse and word**. Otherwise (Maher, Dossary) one MP3 per verse from EveryAyah.com and no highlighting.
+3. **Recitation** — for reciters with word timings, Quran.com's gapless **chapter audio** plus **timestamps for every verse and word**. Most reciters come from the Quran.com v4 API; Yasser ad-Dossary and Khalifah Al Tunaiji only exist in Quran.com's newer audio API (`api.qurancdn.com`), which returns the same data under different field names. Maher al-Muaiqly has no word timings anywhere, so his audio comes as one MP3 per verse from EveryAyah.com and highlighting is off.
 4. **Timeline** — the needed part of the chapter audio is cut to WAV. If the passage starts at verse 1 (and the surah isn't Al-Fatiha or At-Tawbah), the Bismillah is taken from Al-Fatiha 1:1 and placed first. Everything starts after the intro, and the outro is added at the end.
 5. **Background** — see [Backgrounds](#backgrounds).
 6. **Captions** — an Advanced SubStation (`.ass`) subtitle file with the intro card, surah header, every verse (Arabic + English + Bangla + reference), the highlight events, the text watermark and the outro card.
@@ -327,7 +327,7 @@ node make-video.js --surah 1 --from 5 --still preview.png         # one frame, t
 |---|---|---|
 | `--surah` | 1–114 | required |
 | `--from`, `--to` | verse range | whole surah |
-| `--reciter` | alafasy, abdulbasit, abdulbasit-mujawwad, sudais, shatri, rifai, husary, minshawy, minshawy-mujawwad, shuraym, maher\*, dossary\* | alafasy |
+| `--reciter` | alafasy, abdulbasit, abdulbasit-mujawwad, sudais, shatri, rifai, husary, minshawy, minshawy-mujawwad, shuraym, dossary, tunaiji, maher\* | alafasy |
 | `--en` | saheeh, haleem, usmani, yusufali | saheeh |
 | `--bn` | taisirul, mujibur, rawai, zakaria | taisirul |
 | `--format` | `long` (1920×1080) or `short` (1080×1920) | long |
@@ -343,7 +343,7 @@ node make-video.js --surah 1 --from 5 --still preview.png         # one frame, t
 | `--out <file>` | output path (single video only) | `output/…` |
 | `--no-highlight` `--no-intro` `--no-outro` `--no-watermark` `--no-bismillah` | turn features off | |
 
-\* Maher al-Muaiqly and Yasser ad-Dossary have no word timings, so highlighting is off for them.
+\* Maher al-Muaiqly has no word timings, so highlighting is off for him. All other reciters support word-by-word highlighting.
 
 **Background downloads**
 
@@ -410,7 +410,7 @@ All endpoints are local only (`127.0.0.1`).
 | **"FFmpeg missing"** in the sidebar | `winget install Gyan.FFmpeg`, then restart the Studio. |
 | **Pexels: "New API key issuance is paused"** | Use Pixabay instead, or download clips by hand and use **Upload your own**. |
 | **Text on a long verse doesn't get bigger** | It already fills the screen; the note under Text size shows how much it was reduced to fit. |
-| **No word highlighting** | The reciter has no word timings (Maher, Dossary), or the feature is switched off. |
+| **No word highlighting** | The reciter has no word timings (Maher al-Muaiqly), or the feature is switched off. |
 
 ---
 
