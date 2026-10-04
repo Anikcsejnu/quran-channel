@@ -176,6 +176,60 @@
                 </button>
               </div>
             </div>
+
+            <!-- Auto settings -->
+            <div class="bg-panel" id="bgAutoPanel" hidden>
+              <div class="row-2">
+                <div>
+                  <label class="label" for="bgSource">Use clips</label>
+                  <select id="bgSource">
+                    <option value="match">Matching this format</option>
+                    <option value="all">All clips (others cropped)</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="label" for="bgOrder">Order</label>
+                  <select id="bgOrder">
+                    <option value="rotate">Different start per surah</option>
+                    <option value="shuffle">Shuffle every render</option>
+                    <option value="name">By file name</option>
+                  </select>
+                </div>
+              </div>
+              <label class="label" for="bgMax">Maximum clips <span class="hint" id="bgMaxVal"></span></label>
+              <input type="range" id="bgMax" min="1" max="40" step="1">
+              <div class="subhead tight"><h3>Will use</h3><span class="hint" id="bgAutoNote"></span></div>
+              <ol class="bg-strip readonly" id="bgAutoStrip" aria-label="Clips Auto will use"></ol>
+            </div>
+
+            <!-- Gradient settings (also used when Auto finds no clips) -->
+            <div class="bg-panel" id="bgGradientPanel" hidden>
+              <p class="field-note" id="bgGradientNote" hidden>No clips yet, so Auto uses this gradient.</p>
+              <div class="gradient-preview" id="gradientPreview" aria-hidden="true"></div>
+              <div class="gradient-stops" id="gradientStops"></div>
+              <div class="presets" id="gradientPresets"></div>
+              <label class="label" for="gradientSpeed">Animation <span class="hint" id="gradientSpeedVal"></span></label>
+              <input type="range" id="gradientSpeed" min="0" max="10" step="1">
+            </div>
+
+            <!-- Clip look (Auto + Choose clips) -->
+            <div class="bg-panel" id="bgClipPanel" hidden>
+              <div class="row-2">
+                <div>
+                  <label class="label" for="clipSeconds">Seconds per clip <span class="hint" id="clipSecondsVal"></span></label>
+                  <input type="range" id="clipSeconds" min="4" max="30" step="1">
+                </div>
+                <div>
+                  <label class="label" for="bgDim">Dim background <span class="hint" id="bgDimVal"></span></label>
+                  <input type="range" id="bgDim" min="0" max="0.9" step="0.05">
+                </div>
+              </div>
+            </div>
+
+            <div class="bg-actions">
+              <button class="btn ghost sm" id="btnResetBg">Reset</button>
+              <button class="btn ghost sm" id="btnSaveBg">Save background as default</button>
+            </div>
           </div>
 
           <!-- Features -->

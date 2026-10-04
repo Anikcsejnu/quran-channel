@@ -8,7 +8,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 const {
   RECITERS, TRANSLATIONS, TRANSLATION_NAMES, DEFAULT_COLORS, DEFAULT_SIZES, SIZE_RANGE, DEFAULT_CHANNEL,
-  FFMPEG, FFPROBE, MAX_REEL_CLIPS,
+  FFMPEG, FFPROBE, MAX_REEL_CLIPS, DEFAULT_BACKGROUND, BG_LIMITS,
 } = require('./make-video.js');
 const { execFile } = require('child_process');
 
@@ -262,6 +262,28 @@ function validSize(v, name) {
   return String(Math.round(n * 100) / 100);
 }
 
+// Validates background options from the UI; returns a clean object (missing keys are left out)
+function cleanBackgroundOptions(b) {
+  const bad = msg => Object.assign(new Error(msg), { status: 400 });
+  const out = {};
+  if (!b) return out;
+  if (b.source !== undefined) { if (!['match', 'all'].includes(b.source)) throw bad('Invalid background source'); out.source = b.source; }
+  if (b.order !== undefined) { if (!['rotate', 'shuffle', 'name'].includes(b.order)) throw bad('Invalid background order'); out.order = b.order; }
+  for (const [k, [min, max]] of Object.entries(BG_LIMITS)) {
+    if (b[k] === undefined) continue;
+    const n = parseFloat(b[k]);
+    if (!(n >= min && n <= max)) throw bad(`Background ${k} must be between ${min} and ${max}`);
+    out[k] = k === 'max' ? Math.round(n) : Math.round(n * 100) / 100;
+  }
+  if (b.gradient !== undefined) {
+    if (!Array.isArray(b.gradient) || b.gradient.length < 2 || b.gradient.length > 4 || !b.gradient.every(c => HEX_RE.test(c))) {
+      throw bad('Gradient needs 2 to 4 #RRGGBB colours');
+    }
+    out.gradient = b.gradient.map(c => c.toUpperCase());
+  }
+  return out;
+}
+
 function buildArgs(o) {
   const bad = msg => Object.assign(new Error(msg), { status: 400 });
   const a = ['--surah', intIn(o.surah, 1, 114, 'Surah')];
@@ -304,6 +326,10 @@ function buildArgs(o) {
     const s = o.sizes && o.sizes[k];
     if (s !== undefined && s !== null) a.push(`--size-${k}`, validSize(s, k));
   }
+  const bo = cleanBackgroundOptions(o.bgOptions);
+  const flags = { source: '--bg-source', order: '--bg-order', max: '--bg-max', clipSeconds: '--clip-seconds', dim: '--bg-dim', gradientSpeed: '--gradient-speed' };
+  for (const [k, f] of Object.entries(flags)) if (bo[k] !== undefined) a.push(f, String(bo[k]));
+  if (bo.gradient) a.push('--gradient', bo.gradient.join(','));
   return a;
 }
 
@@ -324,6 +350,8 @@ async function api(req, res, url) {
       },
       defaultColors: DEFAULT_COLORS,
       defaultSizes: DEFAULT_SIZES,
+      defaultBackground: DEFAULT_BACKGROUND,
+      backgroundLimits: BG_LIMITS,
       sizeRange: SIZE_RANGE,
       channel: { ...DEFAULT_CHANNEL, ...readChannel() },
       surahs: chapters.chapters.map(c => ({
@@ -364,6 +392,7 @@ async function api(req, res, url) {
       ch.colors = {};
       for (const k of Object.keys(DEFAULT_COLORS)) if (HEX_RE.test(body.colors[k] || '')) ch.colors[k] = body.colors[k].toUpperCase();
     }
+    if (body.background) ch.background = { ...DEFAULT_BACKGROUND, ...cleanBackgroundOptions(body.background) };
     if (body.fontScale) {
       ch.fontScale = {};
       for (const k of Object.keys(DEFAULT_SIZES)) ch.fontScale[k] = parseFloat(validSize(body.fontScale[k] ?? DEFAULT_SIZES[k], k));

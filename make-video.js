@@ -101,6 +101,13 @@ function parseArgs() {
   --bg <file|folder>      background image/video, or a folder of them to cycle through
                           (default: ./backgrounds if it has media, else animated gradient).
                           Repeat --bg to pick several files; they cross-fade in that order.
+                          Use --bg gradient for the animated gradient.
+  --bg-source <match|all> Auto: clips matching the format's orientation, or all clips
+  --bg-order <rotate|shuffle|name>  Auto: clip order (rotate = different first clip per surah)
+  --bg-max <n>            Auto: most clips in the reel (1–${MAX_REEL_CLIPS})
+  --clip-seconds <n>      seconds each clip shows before cross-fading (4–30)
+  --bg-dim <0–0.9>        darken clips so captions stay readable (default 0.55)
+  --gradient "#a,#b,#c"   gradient colours (2–4); --gradient-speed 0–10 (0 = still)
   --batch                 one Short per verse (use --group-seconds to merge very short verses)
   --group-seconds <n>     with --batch: join consecutive verses until each Short is at least n seconds
   --no-highlight          disable word-by-word Arabic highlighting
@@ -447,7 +454,38 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 // A folder of clips/images becomes one cross-faded "reel" video that is looped behind the captions.
 const MAX_REEL_CLIPS = 40;
 
-function resolveBackground(bgArg, fmt, rotate) {
+// Background look. Override in channel.json "background" or with the flags noted beside each value
+const DEFAULT_BACKGROUND = {
+  source: 'match',      // --bg-source: Auto uses clips matching the format's orientation ("match") or every clip ("all")
+  order: 'rotate',      // --bg-order:  "rotate" (different first clip per surah), "shuffle" or "name"
+  max: 12,              // --bg-max:    most clips Auto puts in the reel
+  clipSeconds: 12,      // --clip-seconds: how long each clip shows before cross-fading to the next
+  dim: 0.55,            // --bg-dim:    0 = original brightness, 0.9 = almost black (keeps captions readable)
+  gradient: ['#0A1A24', '#14352B', '#1D1530'], // --gradient "#hex,#hex,#hex" (2–4 colours)
+  gradientSpeed: 2,     // --gradient-speed: 0 (still) to 10 (fast)
+};
+const BG_LIMITS = { max: [1, MAX_REEL_CLIPS], clipSeconds: [4, 30], dim: [0, 0.9], gradientSpeed: [0, 10] };
+
+// Defaults < channel.json "background" < command-line flags
+function resolveBackgroundOptions(channel, args) {
+  const o = { ...DEFAULT_BACKGROUND, ...(channel.background || {}) };
+  const flag = { source: 'bg-source', order: 'bg-order', max: 'bg-max', clipSeconds: 'clip-seconds', dim: 'bg-dim', gradientSpeed: 'gradient-speed' };
+  for (const [k, f] of Object.entries(flag)) if (args[f] !== undefined) o[k] = args[f];
+  if (args.gradient) o.gradient = String(args.gradient).split(',').map(s => s.trim());
+
+  if (!['match', 'all'].includes(o.source)) throw new Error('--bg-source must be "match" or "all"');
+  if (!['rotate', 'shuffle', 'name'].includes(o.order)) throw new Error('--bg-order must be "rotate", "shuffle" or "name"');
+  for (const [k, [min, max]] of Object.entries(BG_LIMITS)) {
+    o[k] = parseFloat(o[k]);
+    if (!(o[k] >= min && o[k] <= max)) throw new Error(`Background ${k} must be between ${min} and ${max}`);
+  }
+  o.max = Math.round(o.max);
+  if (!Array.isArray(o.gradient) || o.gradient.length < 2 || o.gradient.length > 4) throw new Error('--gradient needs 2 to 4 colours');
+  o.gradient.forEach(assColor); // validates #RRGGBB
+  return o;
+}
+
+function resolveBackground(bgArg, fmt, rotate, opts) {
   if (Array.isArray(bgArg)) {
     if (bgArg.length > 1) {
       // Explicit selection: keep the user's order, no rotation
@@ -457,7 +495,7 @@ function resolveBackground(bgArg, fmt, rotate) {
       const bad = files.find(f => !VIDEO_RE.test(f) && !IMAGE_RE.test(f));
       if (bad) throw new Error(`Not an image or video: ${bad}`);
       const used = files.slice(0, MAX_REEL_CLIPS);
-      return { type: 'video', file: buildReel(used, fmt), used };
+      return { type: 'video', file: buildReel(used, fmt, opts), used };
     }
     bgArg = bgArg[0];
   }
@@ -469,24 +507,43 @@ function resolveBackground(bgArg, fmt, rotate) {
   }
   if (fs.statSync(bg).isFile()) return { type: IMAGE_RE.test(bg) ? 'image' : 'video', file: bg, used: [bg] };
 
-  const sub = path.join(bg, fmt.orientation);
-  const dir = fs.existsSync(sub) && fs.readdirSync(sub).some(f => VIDEO_RE.test(f) || IMAGE_RE.test(f)) ? sub : bg;
-  let files = fs.readdirSync(dir).filter(f => VIDEO_RE.test(f) || IMAGE_RE.test(f)).sort().map(f => path.join(dir, f));
+  const media = f => VIDEO_RE.test(f) || IMAGE_RE.test(f);
+  let files;
+  if (opts.source === 'all') {
+    // Every clip in the folder tree; ones of the other shape are centre-cropped
+    const walk = d => fs.readdirSync(d, { withFileTypes: true })
+      .flatMap(e => (e.isDirectory() ? walk(path.join(d, e.name)) : media(e.name) ? [path.join(d, e.name)] : []));
+    files = walk(bg).sort();
+  } else {
+    const sub = path.join(bg, fmt.orientation);
+    const dir = fs.existsSync(sub) && fs.readdirSync(sub).some(media) ? sub : bg;
+    files = fs.readdirSync(dir).filter(media).sort().map(f => path.join(dir, f));
+  }
   if (!files.length) {
-    if (bgArg) throw new Error(`No images/videos in ${dir}`);
+    if (bgArg) throw new Error(`No images/videos in ${bg}`);
     return { type: 'gradient' };
   }
-  // Start at a different clip for each surah so videos don't all look the same
-  const r = rotate % files.length;
-  files = [...files.slice(r), ...files.slice(0, r)].slice(0, 12);
-  if (files.length === 1) return resolveBackground(files[0], fmt, 0);
-  return { type: 'video', file: buildReel(files, fmt), used: files };
+  if (opts.order === 'shuffle') {
+    for (let i = files.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [files[i], files[j]] = [files[j], files[i]];
+    }
+  } else if (opts.order === 'rotate') {
+    // Start at a different clip for each surah so videos don't all look the same
+    const r = rotate % files.length;
+    files = [...files.slice(r), ...files.slice(0, r)];
+  }
+  files = files.slice(0, opts.max);
+  if (files.length === 1) return resolveBackground(files[0], fmt, 0, opts);
+  return { type: 'video', file: buildReel(files, fmt, opts), used: files };
 }
 
-function buildReel(files, fmt) {
+function buildReel(files, fmt, opts) {
   const { w, h } = fmt;
-  const CLIP = 12, FADE = 1.2;
-  const key = require('crypto').createHash('md5').update(files.map(f => f + fs.statSync(f).size).join('|') + w + h).digest('hex').slice(0, 10);
+  const CLIP = opts.clipSeconds;
+  const FADE = Math.min(1.2, CLIP / 4);
+  const key = require('crypto').createHash('md5')
+    .update(files.map(f => f + fs.statSync(f).size).join('|') + w + h + CLIP).digest('hex').slice(0, 10);
   const out = path.join(CACHE, 'reels', `reel-${fmt.orientation}-${key}.mp4`);
   if (fs.existsSync(out)) return out;
   console.log(`• Building background reel from ${files.length} clips`);
@@ -550,15 +607,20 @@ async function renderVideo(job, ctx) {
 
   const { w, h } = fmt;
   const bg = ctx.background;
+  const bo = ctx.bgOptions;
   const inputs = [];
   const graph = [];
   if (bg.type === 'gradient') {
-    inputs.push('-f', 'lavfi', '-i', `gradients=s=${w}x${h}:c0=0x0a1a24:c1=0x14352b:c2=0x1d1530:n=3:speed=0.004:r=30`);
+    const cols = bo.gradient.map((c, i) => `c${i}=0x${c.replace('#', '')}`).join(':');
+    // Speed 0–10 → ffmpeg's rotation speed (0 = still)
+    const speed = (bo.gradientSpeed * 0.002).toFixed(4);
+    inputs.push('-f', 'lavfi', '-i', `gradients=s=${w}x${h}:${cols}:n=${bo.gradient.length}:speed=${speed}:r=30`);
     graph.push(`[0:v]vignette=PI/4,setsar=1[bg]`);
   } else {
+    const level = (1 - bo.dim).toFixed(3);
     inputs.push(...(bg.type === 'image' ? ['-loop', '1', '-framerate', '30'] : ['-stream_loop', '-1']), '-i', bg.file);
     graph.push(`[0:v]scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},fps=30,` +
-      `colorlevels=romax=0.45:gomax=0.45:bomax=0.45,vignette=PI/5,setsar=1[bg]`);
+      `colorlevels=romax=${level}:gomax=${level}:bomax=${level},vignette=PI/5,setsar=1[bg]`);
   }
   inputs.push('-f', 'concat', '-safe', '0', '-i', 'list.txt');
 
@@ -697,10 +759,11 @@ async function main() {
   const rec = await loadRecitation(surah, reciter);
   const bismillahRec = surah === 1 ? rec : await loadRecitation(1, reciter);
 
-  const background = resolveBackground(args.bg, fmt, surah);
+  const bgOptions = resolveBackgroundOptions(channel, args);
+  const background = resolveBackground(args.bg, fmt, surah, bgOptions);
   console.log(`• Background: ${background.type === 'gradient' ? 'animated gradient'
     : background.used && background.used.length > 1 ? `${background.used.length} clips` : path.basename(background.file)}`);
-  const ctx = { data, args, fmt, reciter, rec, bismillahRec, channel, background, colors: resolveColors(channel, args), sizes: resolveSizes(channel, args) };
+  const ctx = { data, args, fmt, reciter, rec, bismillahRec, channel, background, bgOptions, colors: resolveColors(channel, args), sizes: resolveSizes(channel, args) };
 
   const needsBismillah = args.bismillah && data.chapter.bismillah_pre;
   let jobs;
@@ -738,5 +801,5 @@ if (require.main === module) {
 
 module.exports = {
   RECITERS, TRANSLATIONS, TRANSLATION_NAMES, DEFAULT_COLORS, DEFAULT_SIZES, SIZE_RANGE, FORMATS, DEFAULT_CHANNEL,
-  FFMPEG, FFPROBE, MAX_REEL_CLIPS,
+  FFMPEG, FFPROBE, MAX_REEL_CLIPS, DEFAULT_BACKGROUND, BG_LIMITS,
 };

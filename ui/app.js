@@ -93,7 +93,7 @@ let highlightIndex = -1;
 const state = Object.assign({
   surah: 1, from: 1, to: 7,
   reciter: 'alafasy', en: 'saheeh', bn: 'taisirul',
-  mode: 'single', format: 'long', groupSeconds: 0, bgMode: 'auto', bgSelection: [],
+  mode: 'single', format: 'long', groupSeconds: 0, bgMode: 'auto', bgSelection: [], bgOptions: null,
   highlight: true, intro: true, outro: true, watermark: true, bismillah: true,
   colors: null, sizes: null, preview: 'live',
 }, store.get('qvs-state', {}));
@@ -111,6 +111,7 @@ function payload() {
     highlight: state.highlight, intro: state.intro, outro: state.outro,
     watermark: state.watermark, bismillah: state.bismillah,
     bg: state.bgMode === 'custom' ? state.bgSelection : state.bgMode,
+    bgOptions: state.bgOptions,
     colors: state.colors, sizes: state.sizes,
   };
 }
@@ -283,20 +284,34 @@ function applyMode() {
 
 // ---------- Background selection ----------
 
-const REEL_CLIP_SECONDS = 12;
-const REEL_FADE = 1.2;
+const clipSeconds = () => state.bgOptions.clipSeconds;
+const reelFade = () => Math.min(1.2, clipSeconds() / 4);
 const orientationFor = fmt => (fmt === 'short' ? 'portrait' : 'landscape');
 const clipById = id => backgrounds.find(b => b.id === id);
 const fmtDur = s => (s ? fmtClock(s) : '');
 
-// Clips used by "Auto": the format's folder if it has media, else everything — same rule as make-video.js
+// Clips used by "Auto" — mirrors resolveBackground() in make-video.js
 function autoClips() {
-  const o = orientationFor(effectiveFormat());
-  const inFolder = backgrounds.filter(b => b.folder === o);
-  const list = inFolder.length ? inFolder : backgrounds.filter(b => !b.folder);
+  return autoCandidates().slice(0, state.bgOptions.max);
+}
+
+// Every clip Auto could use, in play order (before the max-clips limit)
+function autoCandidates() {
+  const { source, order } = state.bgOptions;
+  let list;
+  if (source === 'all') list = [...backgrounds];
+  else {
+    const o = orientationFor(effectiveFormat());
+    const inFolder = backgrounds.filter(b => b.folder === o);
+    list = inFolder.length ? inFolder : backgrounds.filter(b => !b.folder);
+  }
   if (!list.length) return [];
-  const r = state.surah % list.length;
-  return [...list.slice(r), ...list.slice(0, r)].slice(0, 12);
+  if (order === 'rotate') {
+    const r = state.surah % list.length;
+    list = [...list.slice(r), ...list.slice(0, r)];
+  }
+  // Shuffle happens at render time; the preview shows them by name
+  return list;
 }
 
 // The clips that will actually play, in order
@@ -308,8 +323,9 @@ function activeClips() {
 
 function reelSeconds(clips) {
   if (!clips.length) return 0;
-  const total = clips.reduce((s, c) => s + (c.type === 'video' ? Math.min(REEL_CLIP_SECONDS, c.duration || REEL_CLIP_SECONDS) : REEL_CLIP_SECONDS), 0);
-  return Math.max(0, total - REEL_FADE * (clips.length - 1));
+  const cs = clipSeconds();
+  const total = clips.reduce((s, c) => s + (c.type === 'video' ? Math.min(cs, c.duration || cs) : cs), 0);
+  return Math.max(0, total - reelFade() * (clips.length - 1));
 }
 
 function renderBackgroundControls() {
@@ -345,8 +361,159 @@ function renderBackgroundControls() {
       ? `Reel ≈ ${fmtClock(reelSeconds(clips))}, loops` + (mismatched ? ` · <span style="color:var(--gold)">${mismatched} will be centre-cropped</span>` : '')
       : 'No clips selected';
   }
+
+  // Auto: settings + a read-only strip of the clips it will use
+  const isAuto = state.bgMode === 'auto';
+  const autoHasClips = auto.length > 0;
+  $('#bgAutoPanel').hidden = !isAuto || !backgrounds.length;
+  if (isAuto && backgrounds.length) {
+    const bo = state.bgOptions;
+    $('#bgSource').value = bo.source;
+    $('#bgOrder').value = bo.order;
+    // Slider only goes as high as the clips actually available
+    const available = autoCandidates().length;
+    const top = Math.max(1, Math.min(meta.backgroundLimits.max[1], available));
+    $('#bgMax').max = top;
+    $('#bgMax').disabled = available <= 1;
+    $('#bgMax').value = Math.min(bo.max, top);
+    $('#bgMaxVal').textContent = bo.max >= available ? `all ${available}` : `${bo.max} of ${available}`;
+    const strip = $('#bgAutoStrip');
+    strip.classList.toggle('portrait', o === 'portrait');
+    const shown = auto.slice(0, 8);
+    strip.innerHTML = shown.map((c, i) => `
+      <li title="${esc(c.name)}${c.shape !== o ? ' — will be centre-cropped' : ''}">
+        <img src="${esc(c.thumb)}" alt="${esc(c.name)}" loading="lazy">
+        ${bo.order === 'shuffle' ? '' : `<span class="n">${i + 1}</span>`}
+      </li>`).join('') + (auto.length > shown.length ? `<li class="more">+${auto.length - shown.length}</li>` : '');
+    const crop = auto.filter(c => c.shape !== o).length;
+    $('#bgAutoNote').innerHTML = autoHasClips
+      ? `${auto.length} clip${auto.length > 1 ? 's' : ''} · reel ≈ ${fmtClock(reelSeconds(auto))}`
+        + (bo.order === 'shuffle' ? ' · random order' : '')
+        + (crop ? ` · <span style="color:var(--gold)">${crop} cropped</span>` : '')
+      : 'No clips match this format';
+  }
+
+  // Gradient: shown for Gradient, and for Auto when there are no clips to use
+  const showGradient = state.bgMode === 'gradient' || (isAuto && !autoHasClips);
+  $('#bgGradientPanel').hidden = !showGradient;
+  $('#bgGradientNote').hidden = !(isAuto && !autoHasClips);
+  if (showGradient) renderGradientControls();
+
+  // Seconds per clip and dim apply whenever clips play
+  $('#bgClipPanel').hidden = !activeClips().length;
+  $('#clipSeconds').value = state.bgOptions.clipSeconds;
+  $('#clipSecondsVal').textContent = `${state.bgOptions.clipSeconds}s`;
+  $('#bgDim').value = state.bgOptions.dim;
+  $('#bgDimVal').textContent = `${Math.round(state.bgOptions.dim * 100)}%`;
+
   renderStageBackground();
 }
+
+// ---------- Background options (Auto, Gradient, clip look) ----------
+
+const GRADIENT_PRESETS = {
+  'Night emerald': ['#0A1A24', '#14352B', '#1D1530'],
+  'Midnight blue': ['#050A1F', '#0B2A5B', '#1B1035'],
+  'Desert dusk': ['#2B1A0E', '#5A2E12', '#1A0F1F'],
+  'Royal purple': ['#1A0B2E', '#3A0CA3', '#120A1F'],
+  'Deep teal': ['#021B1A', '#06433F', '#0B2230'],
+  Charcoal: ['#0E0E10', '#1E1F24', '#121316'],
+};
+const SPEED_LABELS = ['Still', 'Very slow', 'Slow', 'Slow', 'Gentle', 'Medium', 'Medium', 'Lively', 'Fast', 'Fast', 'Very fast'];
+
+const gradientCss = cols => `linear-gradient(135deg, ${cols.join(', ')}, ${cols[0]})`;
+// Higher speed → shorter CSS loop; 0 = no animation
+const gradientAnimation = speed => (speed > 0 ? `gradient-drift ${Math.round(48 / speed)}s ease-in-out infinite` : 'none');
+
+function renderGradientControls() {
+  const { gradient, gradientSpeed } = state.bgOptions;
+  const prev = $('#gradientPreview');
+  prev.style.backgroundImage = gradientCss(gradient);
+  prev.style.animation = gradientAnimation(gradientSpeed);
+  $('#gradientStops').innerHTML = gradient.map((c, i) => `
+    <div class="stop">
+      <label class="swatch" style="background:${c}" title="Pick colour ${i + 1}">
+        <input type="color" data-stop="${i}" value="${c.toLowerCase()}" aria-label="Gradient colour ${i + 1}">
+      </label>
+      <input class="hex" data-stop-hex="${i}" value="${c}" maxlength="7" spellcheck="false" aria-label="Gradient colour ${i + 1} hex">
+      ${gradient.length > 2 ? `<button class="rm" data-stop-rm="${i}" title="Remove colour" aria-label="Remove colour ${i + 1}">${ICONS.x}</button>` : ''}
+    </div>`).join('')
+    + (gradient.length < 4 ? '<button class="stop-add" id="stopAdd" title="Add a colour" aria-label="Add a colour"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>' : '');
+  $('#gradientPresets').innerHTML = Object.entries(GRADIENT_PRESETS).map(([name, cols]) => `
+    <button class="preset" data-gradient="${esc(name)}"><span class="bar" style="background:${gradientCss(cols)}"></span>${esc(name)}</button>`).join('');
+  $('#gradientSpeed').value = gradientSpeed;
+  $('#gradientSpeedVal').textContent = SPEED_LABELS[gradientSpeed] || '';
+}
+
+function setBgOption(key, value, { rerender = true } = {}) {
+  state.bgOptions[key] = value;
+  saveState();
+  if (rerender) renderBackgroundControls(); else renderStageBackground();
+  updateSummary();
+  invalidateFrame();
+}
+
+$('#bgSource').addEventListener('change', e => setBgOption('source', e.target.value));
+$('#bgOrder').addEventListener('change', e => setBgOption('order', e.target.value));
+$('#bgMax').addEventListener('input', e => setBgOption('max', +e.target.value));
+$('#clipSeconds').addEventListener('input', e => setBgOption('clipSeconds', +e.target.value));
+$('#bgDim').addEventListener('input', e => {
+  $('#bgDimVal').textContent = `${Math.round(e.target.value * 100)}%`;
+  setBgOption('dim', +e.target.value, { rerender: false });
+});
+$('#gradientSpeed').addEventListener('input', e => setBgOption('gradientSpeed', +e.target.value));
+
+// Gradient colour stops: update the preview live without re-rendering (keeps the picker open)
+function setStop(i, hex) {
+  const g = [...state.bgOptions.gradient];
+  g[i] = hex.toUpperCase();
+  state.bgOptions.gradient = g;
+  const stop = $(`[data-stop="${i}"]`).closest('.stop');
+  $('.swatch', stop).style.background = hex;
+  $('[data-stop]', stop).value = hex.toLowerCase();
+  if (document.activeElement !== $('[data-stop-hex]', stop)) $('[data-stop-hex]', stop).value = hex.toUpperCase();
+  $('#gradientPreview').style.backgroundImage = gradientCss(g);
+  saveState();
+  renderStageBackground();
+  invalidateFrame();
+}
+$('#gradientStops').addEventListener('input', e => {
+  if (e.target.dataset.stop !== undefined) setStop(+e.target.dataset.stop, e.target.value);
+  if (e.target.dataset.stopHex !== undefined) {
+    let v = e.target.value.trim();
+    if (!v.startsWith('#')) v = `#${v}`;
+    const ok = /^#[0-9a-f]{6}$/i.test(v);
+    e.target.classList.toggle('invalid', !ok);
+    if (ok) setStop(+e.target.dataset.stopHex, v);
+  }
+});
+$('#gradientStops').addEventListener('click', e => {
+  const rm = e.target.closest('[data-stop-rm]');
+  if (rm) setBgOption('gradient', state.bgOptions.gradient.filter((_, i) => i !== +rm.dataset.stopRm));
+  if (e.target.closest('#stopAdd')) {
+    const g = state.bgOptions.gradient;
+    setBgOption('gradient', [...g, g[g.length - 1]]);
+  }
+});
+$('#gradientPresets').addEventListener('click', e => {
+  const b = e.target.closest('[data-gradient]');
+  if (b) setBgOption('gradient', [...GRADIENT_PRESETS[b.dataset.gradient]]);
+});
+
+$('#btnResetBg').addEventListener('click', () => {
+  state.bgOptions = { ...meta.defaultBackground, ...(meta.channel.background || {}) };
+  saveState();
+  renderBackgroundControls();
+  invalidateFrame();
+  toast('Background settings reset to your channel default');
+});
+$('#btnSaveBg').addEventListener('click', async () => {
+  try {
+    const { channel } = await api('/api/channel', { method: 'PUT', json: { background: state.bgOptions } });
+    meta.channel = channel;
+    toast('Background settings saved as default');
+  } catch (e) { toast(e.message, 'error'); }
+});
 
 function setBgMode(mode) {
   state.bgMode = mode;
@@ -420,13 +587,26 @@ $('#bgStrip').addEventListener('dragend', () => {
 // Live preview: show the first clip that will play behind the captions
 function renderStageBackground() {
   const holder = $('#stageBg');
+  const live = $('#stageLive');
   const first = activeClips()[0];
-  if (!first) { holder.innerHTML = ''; holder.dataset.id = ''; return; }
-  if (holder.dataset.id === first.id) return;
-  holder.dataset.id = first.id;
-  holder.innerHTML = first.type === 'video'
-    ? `<video src="${esc(first.url)}" poster="${esc(first.thumb)}" muted loop autoplay playsinline preload="metadata"></video>`
-    : `<img src="${esc(first.url)}" alt="">`;
+  // No clip → show the chosen gradient (the CSS default is only a fallback)
+  if (!first) {
+    holder.innerHTML = '';
+    holder.dataset.id = '';
+    live.style.background = gradientCss(state.bgOptions.gradient);
+    live.style.backgroundSize = '300% 300%';
+    live.style.animation = gradientAnimation(state.bgOptions.gradientSpeed);
+    return;
+  }
+  live.style.background = live.style.backgroundSize = live.style.animation = '';
+  if (holder.dataset.id !== first.id) {
+    holder.dataset.id = first.id;
+    holder.innerHTML = first.type === 'video'
+      ? `<video src="${esc(first.url)}" poster="${esc(first.thumb)}" muted loop autoplay playsinline preload="metadata"></video>`
+      : `<img src="${esc(first.url)}" alt="">`;
+  }
+  const media = holder.firstElementChild;
+  if (media) media.style.filter = `brightness(${(1 - state.bgOptions.dim).toFixed(2)})`;
 }
 
 // ---------- Background picker ----------
@@ -519,7 +699,7 @@ function renderPickerPreview() {
     <dl>
       <dt>Type</dt><dd>${c.type === 'video' ? 'Video' : 'Image (slow zoom)'}</dd>
       ${c.width ? `<dt>Size</dt><dd>${c.width} × ${c.height}</dd>` : ''}
-      ${c.duration ? `<dt>Length</dt><dd>${fmtDur(c.duration)}${c.duration > REEL_CLIP_SECONDS ? ` (first ${REEL_CLIP_SECONDS}s used)` : ''}</dd>` : ''}
+      ${c.duration ? `<dt>Length</dt><dd>${fmtDur(c.duration)}${c.duration > clipSeconds() ? ` (first ${clipSeconds()}s used)` : ''}</dd>` : ''}
       <dt>Folder</dt><dd>${esc(c.folder || 'backgrounds')}</dd>
       <dt>File</dt><dd>${fmtSize(c.size)}</dd>
       ${c.credit ? `<dt>Credit</dt><dd>${esc(c.credit)}</dd>` : ''}
@@ -1207,6 +1387,7 @@ async function init() {
 
   state.colors = { ...meta.defaultColors, ...(meta.channel.colors || {}), ...(state.colors || {}) };
   state.sizes = { ...meta.defaultSizes, ...(meta.channel.fontScale || {}), ...(state.sizes || {}) };
+  state.bgOptions = { ...meta.defaultBackground, ...(meta.channel.background || {}), ...(state.bgOptions || {}) };
   if (!surahOf(state.surah)) state.surah = 1;
 
   fillSelect($('#reciter'), meta.reciters.map(r => ({ id: r.id, name: r.wordTimings ? r.name : `${r.name} (no highlighting)` })), state.reciter);

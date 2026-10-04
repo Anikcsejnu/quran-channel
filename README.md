@@ -26,7 +26,7 @@ Then open **http://localhost:4173**. The studio runs only on your computer.
 
 | Page | What you can do |
 |---|---|
-| **Create** | Pick surah and verses (searchable, with quick picks), reciter, translations, video or Shorts batch, background and features. **Choose clips** opens a background picker: select any number of videos/images (numbered in play order, with a live preview, duration, credit and crop guide for Shorts), then drag or arrow-key to reorder them. Style the caption colours with presets or colour pickers, watch the **live preview** with the word highlight moving, or render an **exact preview frame** in about 2 seconds. Then render, with live progress, a log and cancel. |
+| **Create** | Pick surah and verses (searchable, with quick picks), reciter, translations, video or Shorts batch, background and features. **Choose clips** opens a background picker: select any number of videos/images (numbered in play order, with a live preview, duration, credit and crop guide for Shorts), then drag or arrow-key to reorder them. **Auto** has settings too (which clips, order, how many) and shows the clips it will use; **Gradient** lets you pick 2–4 colours, presets and animation speed; seconds per clip and background dim apply to any clips. **Save background as default** stores these in `channel.json` under `"background"`. Style the caption colours with presets or colour pickers, watch the **live preview** with the word highlight moving, or render an **exact preview frame** in about 2 seconds. Then render, with live progress, a log and cancel. |
 | **Library** | Watch rendered videos, copy the YouTube title and description in one click, download or delete. |
 | **Branding** | Channel name, handle, subscribe line, logo upload, intro/outro lengths, default caption colours. |
 | **Backgrounds** | Download clips from Pixabay or Pexels (your API key stays in your browser), upload your own, preview and remove clips. |
@@ -120,6 +120,9 @@ node make-video.js --surah 18 --reciter sudais --bg my-folder   # different reci
 | `--bn` | taisirul, mujibur, rawai, zakaria | taisirul |
 | `--format` | `long` (1920×1080) or `short` (1080×1920) | long |
 | `--bg` | image, video or folder; repeat to cross-fade several files in that order (`--bg a.mp4 --bg b.jpg`), or `gradient` | `backgrounds/` or gradient |
+| `--bg-source` / `--bg-order` / `--bg-max` | Auto: `match`/`all` clips · `rotate`/`shuffle`/`name` · 1–40 | match · rotate · 12 |
+| `--clip-seconds` / `--bg-dim` | seconds each clip shows (4–30) · darkening 0–0.9 | 12 · 0.55 |
+| `--gradient` / `--gradient-speed` | 2–4 colours `"#0A1A24,#14352B,#1D1530"` · 0 (still)–10 | Night emerald · 2 |
 | `--batch` | one Short per verse → `output/<surah>_shorts/` | |
 | `--group-seconds` | with `--batch`: merge verses until each Short is ≥ n s | 0 |
 | `--no-highlight` `--no-intro` `--no-outro` `--no-watermark` `--no-bismillah` | turn features off | |
