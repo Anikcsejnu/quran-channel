@@ -351,46 +351,83 @@ function resolveSizes(channel, args) {
   return out;
 }
 
-// Average character width (in units of font size) and line height, measured from libass renders of
+// Caption text sizes are given the way browsers (and the Studio's live preview) size text: by the font's
+// em. libass instead sizes a font so its OS/2 winAscent+winDescent equals \fs, which draws Amiri Quran
+// ~2.8x smaller at the same number. EM_RATIO converts an em size into the \fs value libass needs.
+const FONT_FILES_BY_ROLE = { arabic: 'AmiriQuran-Regular.ttf', latin: 'Poppins-Regular.ttf', bangla: 'HindSiliguri-Regular.ttf' };
+const DEFAULT_EM_RATIO = { arabic: 2.774, latin: 1.762, bangla: 1.617 };
+
+function readEmRatio(file) {
+  const b = fs.readFileSync(file);
+  const tables = {};
+  for (let i = 0; i < b.readUInt16BE(4); i++) {
+    const o = 12 + i * 16;
+    tables[b.toString('ascii', o, o + 4)] = b.readUInt32BE(o + 8);
+  }
+  const upm = b.readUInt16BE(tables.head + 18);
+  const os2 = tables['OS/2'];
+  return (b.readUInt16BE(os2 + 74) + b.readUInt16BE(os2 + 76)) / upm;
+}
+
+let emRatioCache = null;
+function emRatio() {
+  if (emRatioCache) return emRatioCache;
+  const out = {};
+  for (const [role, file] of Object.entries(FONT_FILES_BY_ROLE)) {
+    const p = path.join(FONTS, file);
+    try { out[role] = fs.existsSync(p) ? readEmRatio(p) : DEFAULT_EM_RATIO[role]; } catch { out[role] = DEFAULT_EM_RATIO[role]; }
+  }
+  return (emRatioCache = out);
+}
+
+// Average character width (in units of libass \fs) and line height, measured from libass renders of
 // the caption fonts. Arabic is per base letter: harakat and other marks take no horizontal space.
 const FONT_METRICS = { arabic: 0.123, english: 0.28, bangla: 0.245, lineHeight: 1.04, wrapSlack: 1.08 };
 const ARABIC_MARKS = /[ؐ-ًؚ-ٰٟۖ-ۭ࣓-ࣿ]/g;
-// Blank-line gaps between the languages plus the reference label, in font-size units (see verseEvents)
-const VERSE_EXTRA_LINES = 24 + 14 + 20 + 28;
+// Vertical gaps between the languages (pixels at full size, scaled with the verse) and the reference label size
+const VERSE_GAPS = { afterArabic: 24, afterEnglish: 14, beforeReference: 20 };
+const REFERENCE_SIZE = 28;
+const WATERMARK_SIZE = 22;
 
 // Font size multiplier for a verse. Estimates how many lines each language wraps to and shrinks only
 // when the whole block would not fit on screen, so the chosen text sizes are kept whenever there is room.
-function verseFit(c, fmt, size) {
+function verseFit(c, fmt, size, ratio = emRatio()) {
   const width = fmt.w - 2 * fmt.margin;
   const room = fmt.h * fmt.fill;
   const m = FONT_METRICS;
+  // [width per unit of \fs, \fs at full size]
   const blocks = [
-    [(c.words.join(' ') + ' ﴿٠﴾').replace(ARABIC_MARKS, '').length * m.arabic, fmt.ar * size.arabic],
-    [c.en.length * m.english, fmt.en * size.english],
-    [c.bn.length * m.bangla, fmt.bn * size.bangla],
+    [(c.words.join(' ') + ' ﴿٠﴾').replace(ARABIC_MARKS, '').length * m.arabic, fmt.ar * size.arabic * ratio.arabic],
+    [c.en.length * m.english, fmt.en * size.english * ratio.latin],
+    [c.bn.length * m.bangla, fmt.bn * size.bangla * ratio.bangla],
   ];
+  const g = VERSE_GAPS;
+  const extra = g.afterArabic + g.afterEnglish + g.beforeReference + REFERENCE_SIZE * ratio.latin;
   const height = k => blocks.reduce((h, [em, fs]) => {
     const lines = Math.max(1, Math.ceil((em * fs * k * m.wrapSlack) / width));
     return h + lines * m.lineHeight * fs * k;
-  }, 0) + VERSE_EXTRA_LINES * m.lineHeight * k;
-  for (let k = 1; k > 0.3; k -= 0.02) if (height(k) <= room) return k;
-  return 0.3;
+  }, 0) + extra * m.lineHeight * k;
+  for (let k = 1; k > 0.1; k -= 0.01) if (height(k) <= room) return k;
+  return 0.1;
 }
 
 function verseEvents(c, fmt, highlight, col, size) {
   const AR_BASE = `\\c${col.arabic}\\3c&H00000000&\\bord2\\blur0`;
   const AR_HIGHLIGHT = `\\c${col.highlight}\\3c${col.glow}\\bord3\\blur4`;
-  const k = verseFit(c, fmt, size);
-  const fs = n => Math.round(n * k);
-  // A blank line of a given size, used as vertical spacing between the languages
-  const gap = n => `\\N{\\fs${fs(n)}}\\h\\N`;
+  const ratio = emRatio();
+  const k = verseFit(c, fmt, size, ratio);
+  // Em size (as in the live preview) \u2192 libass \fs for that font
+  const fs = (em, role) => Math.round(em * k * ratio[role]);
+  // A blank line of the given height, used as vertical spacing between the languages
+  const gap = n => `\\N{\\fs${Math.round(n * k)}}\\h\\N`;
+  const g = VERSE_GAPS;
   const marker = c.num ? ` \uFD3F${c.num.toLocaleString('ar-EG')}\uFD3E` : '';
   const body = active =>
-    `{\\fnAmiri Quran\\fs${fs(fmt.ar * size.arabic)}${AR_BASE}}` +
+    `{\\fnAmiri Quran\\fs${fs(fmt.ar * size.arabic, 'arabic')}${AR_BASE}}` +
     rtl(c.words.map((w, i) => (i === active ? `{${AR_HIGHLIGHT}}${esc(w)}{${AR_BASE}}` : esc(w))).join(' ') + marker) +
-    `${gap(24)}{\\fnPoppins\\fs${fs(fmt.en * size.english)}\\c${col.english}\\bord2}${esc(c.en)}` +
-    `${gap(14)}{\\fnHind Siliguri\\fs${fs(fmt.bn * size.bangla)}\\c${col.bangla}\\bord2}${esc(c.bn)}` +
-    (c.label ? `${gap(20)}{\\fnPoppins\\fs${fs(28)}\\c${col.reference}\\bord1}${esc(c.label)}` : '');
+    `${gap(g.afterArabic)}{\\fnPoppins\\fs${fs(fmt.en * size.english, 'latin')}\\c${col.english}\\bord2}${esc(c.en)}` +
+    `${gap(g.afterEnglish)}{\\fnHind Siliguri\\fs${fs(fmt.bn * size.bangla, 'bangla')}\\c${col.bangla}\\bord2}${esc(c.bn)}` +
+    (c.label ? `${gap(g.beforeReference)}{\\fnPoppins\\fs${fs(REFERENCE_SIZE, 'latin')}\\c${col.reference}\\bord1}${esc(c.label)}` : '');
 
   if (!highlight || !c.segs.length) return [{ start: c.start, end: c.end, text: `{\\fad(250,250)}${body(-1)}` }];
 
@@ -420,9 +457,9 @@ ScaledBorderAndShadow: yes
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Verse,Poppins,${fmt.en},&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,2,5,${fmt.margin},${fmt.margin},40,-1
-Style: Header,Poppins SemiBold,${fmt.header},&H00C8E6FF,&H00FFFFFF,&H00000000,&H80000000,0,0,0,0,100,100,1,0,1,1.5,1,8,40,40,${Math.round(h * 0.05)},1
+Style: Header,Poppins SemiBold,${Math.round(fmt.header * emRatio().latin)},&H00C8E6FF,&H00FFFFFF,&H00000000,&H80000000,0,0,0,0,100,100,1,0,1,1.5,1,8,40,40,${Math.round(h * 0.05)},1
 Style: Card,Poppins,40,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,2,5,${fmt.margin},${fmt.margin},0,1
-Style: Watermark,Poppins SemiBold,${u(28)},&H60FFFFFF,&H00FFFFFF,&H90000000,&H00000000,0,0,0,0,100,100,1,0,1,1,0,3,36,36,32,1
+Style: Watermark,Poppins SemiBold,${Math.round(u(WATERMARK_SIZE) * emRatio().latin)},&H60FFFFFF,&H00FFFFFF,&H90000000,&H00000000,0,0,0,0,100,100,1,0,1,1,0,3,36,36,32,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -767,6 +804,7 @@ async function main() {
   for (const [file, rel] of Object.entries(FONT_FILES)) {
     await download(`https://github.com/google/fonts/raw/main/${rel}`, path.join(FONTS, file));
   }
+  emRatioCache = null; // re-read metrics now that the fonts are on disk
 
   console.log('• Quran text & translations');
   const data = await loadSurah(surah, args);
@@ -820,5 +858,5 @@ if (require.main === module) {
 module.exports = {
   RECITERS, TRANSLATIONS, TRANSLATION_NAMES, DEFAULT_COLORS, DEFAULT_SIZES, SIZE_RANGE, FORMATS, DEFAULT_CHANNEL,
   FFMPEG, FFPROBE, MAX_REEL_CLIPS, DEFAULT_BACKGROUND, BG_LIMITS, verseFit,
-  FONT_METRICS, VERSE_EXTRA_LINES,
+  FONT_METRICS, VERSE_GAPS, REFERENCE_SIZE, WATERMARK_SIZE, emRatio,
 };

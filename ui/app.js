@@ -84,20 +84,26 @@ const ARABIC_MARKS = /[ؐ-ًؚ-ٰٟۖ-ۭ࣓-ࣿ]/g;
 // Same calculation as verseFit() in make-video.js: keep the chosen sizes unless the verse would overflow
 function verseFit(words, en, bn, fmt, size) {
   const m = LAYOUT.fontMetrics;
+  const r = LAYOUT.emRatio;
+  const g = LAYOUT.gaps;
   const width = fmt.w - 2 * fmt.margin;
   const room = fmt.h * fmt.fill;
   const blocks = [
-    [(words.join(' ') + ' ﴿٠﴾').replace(ARABIC_MARKS, '').length * m.arabic, fmt.ar * size.arabic],
-    [en.length * m.english, fmt.en * size.english],
-    [bn.length * m.bangla, fmt.bn * size.bangla],
+    [(words.join(' ') + ' ﴿٠﴾').replace(ARABIC_MARKS, '').length * m.arabic, fmt.ar * size.arabic * r.arabic],
+    [en.length * m.english, fmt.en * size.english * r.latin],
+    [bn.length * m.bangla, fmt.bn * size.bangla * r.bangla],
   ];
+  const extra = g.afterArabic + g.afterEnglish + g.beforeReference + LAYOUT.referenceSize * r.latin;
   const height = k => blocks.reduce((h, [em, fs]) => {
     const lines = Math.max(1, Math.ceil((em * fs * k * m.wrapSlack) / width));
     return h + lines * m.lineHeight * fs * k;
-  }, 0) + LAYOUT.extraLines * m.lineHeight * k;
-  for (let k = 1; k > 0.3; k -= 0.02) if (height(k) <= room) return k;
-  return 0.3;
+  }, 0) + extra * m.lineHeight * k;
+  for (let k = 1; k > 0.1; k -= 0.01) if (height(k) <= room) return k;
+  return 0.1;
 }
+
+// CSS line-height that reproduces libass line spacing: libass puts lines (winAscent+winDescent) × 1.04 apart
+const lineHeightFor = role => (LAYOUT.emRatio[role] * LAYOUT.fontMetrics.lineHeight).toFixed(3);
 
 // ---------- State ----------
 
@@ -973,8 +979,10 @@ function renderStage() {
   const s = surahOf(state.surah);
   const px = n => `${(n * scale).toFixed(2)}px`;
 
-  $('#stHeader').textContent = `Surah ${s.name} · ${s.meaning}`;
-  $('#stHeader').style.fontSize = px(fmt.header);
+  // Positions and sizes below mirror buildAss()/verseEvents() in make-video.js
+  const head = $('#stHeader');
+  head.textContent = `Surah ${s.name} · ${s.meaning}`;
+  head.style.cssText = `font-size:${px(fmt.header)};line-height:${lineHeightFor('latin')};top:${px(fmt.h * 0.05)};letter-spacing:${px(1)}`;
 
   const words = verse ? verse.words : ['…'];
   const en = verse ? verse.en : 'Loading verse…';
@@ -991,8 +999,12 @@ function renderStage() {
   const body = $('#stBody');
   body.style.padding = `0 ${px(fmt.margin)}`;
 
+  const g = LAYOUT.gaps;
+  // A libass gap line of height n is n × 1.04 tall
+  const gapPx = n => px(n * k * LAYOUT.fontMetrics.lineHeight);
   const ar = $('#stArabic');
   ar.style.fontSize = px(fmt.ar * sz.arabic * k);
+  ar.style.lineHeight = lineHeightFor('arabic');
   ar.style.color = c.arabic;
   ar.innerHTML = words.map((w, i) => `<span class="w" data-i="${i}">${esc(w)}</span>`).join(' ')
     + (verse ? ` <span class="num">﴿${toArabicDigits(verse.number)}﴾</span>` : '');
@@ -1000,22 +1012,26 @@ function renderStage() {
 
   const enEl = $('#stEnglish');
   enEl.textContent = en;
-  enEl.style.cssText = `font-size:${px(fmt.en * sz.english * k)};color:${c.english};margin-top:${px(24 * k)}`;
+  enEl.style.cssText = `font-size:${px(fmt.en * sz.english * k)};line-height:${lineHeightFor('latin')};color:${c.english};margin-top:${gapPx(g.afterArabic)}`;
   const bnEl = $('#stBangla');
   bnEl.textContent = bn;
-  bnEl.style.cssText = `font-size:${px(fmt.bn * sz.bangla * k)};color:${c.bangla};margin-top:${px(14 * k)}`;
+  bnEl.style.cssText = `font-size:${px(fmt.bn * sz.bangla * k)};line-height:${lineHeightFor('bangla')};color:${c.bangla};margin-top:${gapPx(g.afterEnglish)}`;
   const ref = $('#stRef');
   ref.textContent = verse ? `${s.name} ${verse.key}` : '';
-  ref.style.cssText = `font-size:${px(28 * k)};color:${c.reference};margin-top:${px(20 * k)}`;
+  ref.style.cssText = `font-size:${px(LAYOUT.referenceSize * k)};line-height:${lineHeightFor('latin')};color:${c.reference};margin-top:${gapPx(g.beforeReference)}`;
 
+  // Watermark: libass anchors it 36 px from the right and 32 px from the bottom
   const wm = $('#stWatermark');
   wm.hidden = !state.watermark;
+  wm.style.right = px(36);
+  wm.style.bottom = px(32);
   const ch = meta.channel;
   if (ch.logo && ch.logoUrl) {
     wm.innerHTML = `<img src="${esc(ch.logoUrl)}" alt="" style="height:${px(fmt.h * (effectiveFormat() === 'short' ? 0.045 : 0.07))}">`;
   } else {
     wm.textContent = ch.handle || ch.name || '';
-    wm.style.fontSize = px(28);
+    wm.style.fontSize = px(LAYOUT.watermarkSize * fmt.ui);
+    wm.style.lineHeight = lineHeightFor('latin');
   }
 }
 

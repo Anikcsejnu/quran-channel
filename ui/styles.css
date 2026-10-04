@@ -327,6 +327,8 @@ select {
   position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: center; align-items: center;
   text-align: center; z-index: 1;
 }
+/* Line heights are set from the renderer's font metrics in app.js; balanced wrapping matches libass's smart wrap */
+.st-ar, .st-en, .st-bn, .st-ref { text-wrap: balance; }
 .st-ar { font-family: "Amiri Quran", serif; line-height: 1.85; }
 .st-ar .w { transition: color 0.12s, text-shadow 0.12s; }
 .st-en { font-family: Poppins, sans-serif; line-height: 1.35; }
