@@ -1,0 +1,7 @@
+{
+  "name": "My Quran Channel",
+  "handle": "@MyQuranChannel",
+  "logo": "",
+  "intro": { "long": 5, "short": 1.5 },
+  "outro": { "long": 6, "short": 2.5 }
+}
