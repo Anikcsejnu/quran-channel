@@ -10,5 +10,18 @@
   "outro": {
     "long": 6,
     "short": 2.5
+  },
+  "colors": {
+    "arabic": "#F4F1E8",
+    "highlight": "#FFFFFF",
+    "glow": "#7FA8FF",
+    "english": "#D9E2F2",
+    "bangla": "#C9D6EE",
+    "reference": "#8D99AE"
+  },
+  "fontScale": {
+    "arabic": 1.4,
+    "english": 1.1,
+    "bangla": 1.25
   }
 }
