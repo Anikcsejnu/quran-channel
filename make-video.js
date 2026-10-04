@@ -59,7 +59,17 @@ const DEFAULT_CHANNEL = {
   outro: { long: 6, short: 2.5 },
 };
 
-const VIDEO_RE = /\.(mp4|mov|webm|mkv)$/i;
+// Caption colours (#RRGGBB). Override per channel in channel.json "colors" or per run with --color-<name>
+const DEFAULT_COLORS = {
+  arabic: '#FFD780',    // Arabic verse text
+  highlight: '#FFFFFF', // word currently being recited
+  glow: '#FFB400',      // glow around the highlighted word
+  english: '#FFFFFF',
+  bangla: '#C8F0B4',
+  reference: '#A0A0A0', // "Al-Fatihah 1:5" label
+};
+
+const VIDEO_RE =/\.(mp4|mov|webm|mkv)$/i;
 const IMAGE_RE = /\.(jpe?g|png|webp|bmp)$/i;
 
 const BOOL_FLAGS = new Set(['no-bismillah', 'no-highlight', 'no-intro', 'no-outro', 'no-watermark', 'batch']);
@@ -89,6 +99,8 @@ function parseArgs() {
   --no-highlight          disable word-by-word Arabic highlighting
   --no-intro / --no-outro / --no-watermark
   --no-bismillah          don't prepend Bismillah audio
+  --color-<name> <#hex>   ${Object.keys(DEFAULT_COLORS).join(', ')} (e.g. --color-highlight #00FFAA)
+  --still <file.png>      render one preview frame of the first verse instead of a video
   --out <file>            output mp4 path (single video only)
 
 Branding (channel name, @handle, logo, intro/outro length) is read from channel.json.`);
@@ -110,11 +122,17 @@ function findBin(name) {
   }
   throw new Error(`${name} not found. Install FFmpeg: winget install Gyan.FFmpeg`);
 }
-const FFMPEG = findBin('ffmpeg');
-const FFPROBE = findBin('ffprobe');
+const tryFindBin = name => { try { return findBin(name); } catch { return null; } };
+const FFMPEG = tryFindBin('ffmpeg');
+const FFPROBE = tryFindBin('ffprobe');
+const requireBin = (bin, name) => {
+  if (!bin) throw new Error(`${name} not found. Install FFmpeg: winget install Gyan.FFmpeg`);
+  return bin;
+};
 
-const ffmpeg = (args, cwd) => execFileSync(FFMPEG, ['-y', '-hide_banner', '-loglevel', 'error', ...args], { cwd, stdio: 'inherit' });
-const probeDuration = file => parseFloat(execFileSync(FFPROBE,
+const ffmpeg = (args, cwd) => execFileSync(requireBin(FFMPEG, 'ffmpeg'),
+  ['-y', '-hide_banner', '-loglevel', 'error', ...args], { cwd, stdio: 'inherit' });
+const probeDuration = file => parseFloat(execFileSync(requireBin(FFPROBE, 'ffprobe'),
   ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', file]).toString());
 
 async function download(url, dest) {
@@ -289,10 +307,26 @@ function assTime(sec) {
   return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(cs % 100).padStart(2, '0')}`;
 }
 
-const AR_BASE = '\\c&H0080D7FF&\\3c&H00000000&\\bord2\\blur0';
-const AR_HIGHLIGHT = '\\c&H00FFFFFF&\\3c&H0000B4FF&\\bord3\\blur4';
+// #RRGGBB → ASS &H00BBGGRR&
+function assColor(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex).trim());
+  if (!m) throw new Error(`Invalid colour "${hex}" (use #RRGGBB)`);
+  const h = m[1].toUpperCase();
+  return `&H00${h.slice(4, 6)}${h.slice(2, 4)}${h.slice(0, 2)}&`;
+}
 
-function verseEvents(c, fmt, highlight) {
+// Defaults < channel.json "colors" < --color-<name> flags
+function resolveColors(channel, args) {
+  const out = {};
+  for (const k of Object.keys(DEFAULT_COLORS)) {
+    out[k] = assColor(args[`color-${k}`] || (channel.colors || {})[k] || DEFAULT_COLORS[k]);
+  }
+  return out;
+}
+
+function verseEvents(c, fmt, highlight, col) {
+  const AR_BASE = `\\c${col.arabic}\\3c&H00000000&\\bord2\\blur0`;
+  const AR_HIGHLIGHT = `\\c${col.highlight}\\3c${col.glow}\\bord3\\blur4`;
   // Shrink long verses so all three languages fit on screen
   const len = c.words.join(' ').length * 1.3 + c.en.length * 0.5 + c.bn.length * 0.5;
   const k = Math.max(0.42, Math.min(1, Math.sqrt(fmt.budget / len)));
@@ -303,9 +337,9 @@ function verseEvents(c, fmt, highlight) {
   const body = active =>
     `{\\fnAmiri Quran\\fs${fs(fmt.ar)}${AR_BASE}}` +
     rtl(c.words.map((w, i) => (i === active ? `{${AR_HIGHLIGHT}}${esc(w)}{${AR_BASE}}` : esc(w))).join(' ') + marker) +
-    `${gap(24)}{\\fnPoppins\\fs${fs(fmt.en)}\\c&H00FFFFFF&\\bord2}${esc(c.en)}` +
-    `${gap(14)}{\\fnHind Siliguri\\fs${fs(fmt.bn)}\\c&H00B4F0C8&\\bord2}${esc(c.bn)}` +
-    (c.label ? `${gap(20)}{\\fnPoppins\\fs${fs(28)}\\c&H00A0A0A0&\\bord1}${esc(c.label)}` : '');
+    `${gap(24)}{\\fnPoppins\\fs${fs(fmt.en)}\\c${col.english}\\bord2}${esc(c.en)}` +
+    `${gap(14)}{\\fnHind Siliguri\\fs${fs(fmt.bn)}\\c${col.bangla}\\bord2}${esc(c.bn)}` +
+    (c.label ? `${gap(20)}{\\fnPoppins\\fs${fs(28)}\\c${col.reference}\\bord1}${esc(c.label)}` : '');
 
   if (!highlight || !c.segs.length) return [{ start: c.start, end: c.end, text: `{\\fad(250,250)}${body(-1)}` }];
 
@@ -322,7 +356,7 @@ function verseEvents(c, fmt, highlight) {
   }));
 }
 
-function buildAss({ cues, fmt, data, reciter, channel, job, intro, outro, total, watermark, highlight }) {
+function buildAss({ cues, fmt, data, reciter, channel, job, intro, outro, total, watermark, highlight, colors: col }) {
   const { w, h } = fmt;
   const u = n => Math.round(n * fmt.ui);
   const head = `[Script Info]
@@ -358,9 +392,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     const range = job.from === 1 && job.to === chapter.verses_count ? '' : `  ·  Verses ${job.from}–${job.to}`;
     const top = channel.logo ? 0.30 : 0.26;
     card(0, intro, top, `\\fnPoppins SemiBold\\fs${u(36)}\\fsp4\\c&H00A8D8F0&`, esc(channel.name.toUpperCase()));
-    card(0, intro, 0.45, `\\fnAmiri Quran\\fs${u(short ? 130 : 150)}\\c&H0080D7FF&\\bord2`, rtl(`سورة ${chapter.name_arabic}`), 0.3);
+    card(0, intro, 0.45, `\\fnAmiri Quran\\fs${u(short ? 130 : 150)}\\c${col.arabic}\\bord2`, rtl(`سورة ${chapter.name_arabic}`), 0.3);
     card(0, intro, 0.60, `\\fnPoppins\\fs${u(46)}`, esc(`Surah ${chapter.name_simple} · ${chapter.translated_name.name}`), 0.6);
-    card(0, intro, 0.67, `\\fnHind Siliguri\\fs${u(46)}\\c&H00B4F0C8&`, esc(`সূরা ${chapter.name_bn}`), 0.8);
+    card(0, intro, 0.67, `\\fnHind Siliguri\\fs${u(46)}\\c${col.bangla}`, esc(`সূরা ${chapter.name_bn}`), 0.8);
     if (!short) card(0, intro, 0.77, `\\fnPoppins\\fs${u(30)}\\c&H00B0B0B0&`, esc(`Recitation: ${reciter.name}${range}`), 1.1);
   }
 
@@ -368,16 +402,16 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
   if (watermark && !channel.logo) add(0, intro, versesEnd, 'Watermark', esc(channel.handle || channel.name));
 
   for (const c of cues) {
-    for (const e of verseEvents(c, fmt, highlight)) add(1, e.start, Math.min(e.end, versesEnd), 'Verse', e.text);
+    for (const e of verseEvents(c, fmt, highlight, col)) add(1, e.start, Math.min(e.end, versesEnd), 'Verse', e.text);
   }
 
   if (outro > 0) {
     const s = versesEnd;
-    card(s, total, 0.34, `\\fnAmiri Quran\\fs${u(110)}\\c&H0080D7FF&`, rtl('جَزَاكُمُ ٱللَّهُ خَيْرًا'));
+    card(s, total, 0.34, `\\fnAmiri Quran\\fs${u(110)}\\c${col.arabic}`, rtl('جَزَاكُمُ ٱللَّهُ خَيْرًا'));
     card(s, total, 0.50, `\\fnPoppins SemiBold\\fs${u(54)}`, esc(`Subscribe to ${channel.name}`), 0.3);
     if (channel.handle) card(s, total, 0.57, `\\fnPoppins\\fs${u(40)}\\c&H00A8D8F0&`, esc(channel.handle), 0.4);
     card(s, total, 0.68, `\\fnPoppins\\fs${u(32)}\\c&H00D0D0D0&`, 'Share this video — it may become Sadaqah Jariyah for you', 0.7);
-    card(s, total, 0.74, `\\fnHind Siliguri\\fs${u(34)}\\c&H00B4F0C8&`, 'ভিডিওটি শেয়ার করুন — এটি আপনার জন্য সদকায়ে জারিয়া হতে পারে', 0.8);
+    card(s, total, 0.74, `\\fnHind Siliguri\\fs${u(34)}\\c${col.bangla}`, 'ভিডিওটি শেয়ার করুন — এটি আপনার জন্য সদকায়ে জারিয়া হতে পারে', 0.8);
   }
   return head + ev.join('\n') + '\n';
 }
@@ -386,6 +420,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
 // A folder of clips/images becomes one cross-faded "reel" video that is looped behind the captions.
 function resolveBackground(bgArg, fmt, rotate) {
+  if (bgArg === 'gradient') return { type: 'gradient' };
   let bg = bgArg ? path.resolve(bgArg) : path.join(ROOT, 'backgrounds');
   if (!fs.existsSync(bg)) {
     if (bgArg) throw new Error(`Background not found: ${bg}`);
@@ -465,7 +500,7 @@ async function renderVideo(job, ctx) {
   fs.writeFileSync(path.join(work, 'list.txt'),
     parts.map(p => `file '${p.replace(/\\/g, '/').replace(/'/g, "'\\''")}'`).join('\n'));
   fs.writeFileSync(path.join(work, 'subs.ass'), '\uFEFF' +
-    buildAss({ cues, fmt, data, reciter, channel, job, intro, outro, total, watermark, highlight }), 'utf8');
+    buildAss({ cues, fmt, data, reciter, channel, job, intro, outro, total, watermark, highlight, colors: ctx.colors }), 'utf8');
   // libass can't open fonts via a ../ path on Windows, so keep a copy beside subs.ass
   fs.cpSync(FONTS, path.join(work, 'fonts'), { recursive: true });
 
@@ -501,12 +536,24 @@ async function renderVideo(job, ctx) {
       graph.push(`[lg2]nullsink`);
     }
   }
-  graph.push(`[${vLabel}]subtitles=subs.ass:fontsdir=fonts,format=yuv420p[v]`);
-  const ms = Math.round(intro * 1000);
-  graph.push(`[1:a]adelay=delays=${ms}:all=1,apad[a]`);
+  // Preview still: shift timestamps so the very first frame is already partway through the verse
+  // (a word is highlighted) instead of rendering every frame up to that point
+  const c0 = cues[cues.length - 1];
+  const stillAt = c0.start + (c0.end - c0.start) * 0.45;
+  const shift = args.still ? `setpts=PTS+${stillAt.toFixed(2)}/TB,` : '';
+  graph.push(`[${vLabel}]${shift}subtitles=subs.ass:fontsdir=fonts,format=yuv420p[v]`);
 
   const outFile = path.resolve(job.out || path.join(OUT, `${tag}.mp4`));
   fs.mkdirSync(path.dirname(outFile), { recursive: true });
+
+  if (args.still) {
+    ffmpeg([...inputs, '-filter_complex', graph.join(';'), '-map', '[v]', '-frames:v', '1', outFile], work);
+    return outFile;
+  }
+
+  const ms = Math.round(intro * 1000);
+  graph.push(`[1:a]adelay=delays=${ms}:all=1,apad[a]`);
+  console.log(`  duration ${total.toFixed(2)}s`);
   ffmpeg([...inputs, '-filter_complex', graph.join(';'), '-map', '[v]', '-map', '[a]',
     '-t', total.toFixed(3),
     '-c:v', 'libx264', '-preset', 'medium', '-crf', '20', '-r', '30',
@@ -608,11 +655,14 @@ async function main() {
 
   const background = resolveBackground(args.bg, fmt, surah);
   console.log(`• Background: ${background.type === 'gradient' ? 'animated gradient' : path.basename(background.file)}`);
-  const ctx = { data, args, fmt, reciter, rec, bismillahRec, channel, background };
+  const ctx = { data, args, fmt, reciter, rec, bismillahRec, channel, background, colors: resolveColors(channel, args) };
 
   const needsBismillah = args.bismillah && data.chapter.bismillah_pre;
   let jobs;
-  if (args.batch) {
+  if (args.still) {
+    args['no-intro'] = args['no-outro'] = true;
+    jobs = [{ from, to: from, bismillah: false, out: args.still }];
+  } else if (args.batch) {
     // One Short per verse, optionally merging consecutive short verses up to --group-seconds
     const minSec = parseFloat(args['group-seconds'] || 0);
     jobs = [];
@@ -637,4 +687,8 @@ async function main() {
   }
 }
 
-main().catch(e => { console.error('\n✗', e.message); process.exit(1); });
+if (require.main === module) {
+  main().catch(e => { console.error('\n✗', e.message); process.exit(1); });
+}
+
+module.exports = { RECITERS, TRANSLATIONS, TRANSLATION_NAMES, DEFAULT_COLORS, FORMATS, DEFAULT_CHANNEL, FFMPEG };

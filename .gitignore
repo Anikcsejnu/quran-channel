@@ -4,3 +4,4 @@ output/
 fonts/
 backgrounds/
 node_modules/
+.claude/

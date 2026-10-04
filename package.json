@@ -1,0 +1,14 @@
+{
+  "name": "quran-channel",
+  "version": "1.1.0",
+  "private": true,
+  "description": "Quran recitation videos and Shorts with Arabic, English and Bangla captions",
+  "scripts": {
+    "start": "node server.js",
+    "video": "node make-video.js",
+    "backgrounds": "node fetch-backgrounds.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

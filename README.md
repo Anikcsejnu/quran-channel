@@ -6,12 +6,49 @@ Generates YouTube videos and Shorts of Quran recitation with synced captions:
 - Branded **intro/outro** and a **channel watermark** (text or your logo)
 - **Background videos** (Islamic architecture, nature…) cycled with cross-fades
 - **Batch mode**: one Short per verse of a surah, each with its own YouTube description
+- **Custom caption colours**: Arabic text, highlighted word, glow, English, Bangla, verse reference
+- **Studio**: a local web UI for all of the above
 
 ## Requirements
 - Node.js 18+ (no npm packages needed)
 - FFmpeg: `winget install Gyan.FFmpeg`
 
 Fonts (Amiri Quran, Hind Siliguri, Poppins) download automatically on first run.
+
+## Studio (web UI)
+
+```bash
+npm start
+```
+
+Then open **http://localhost:4173**. The studio runs only on your computer.
+
+| Page | What you can do |
+|---|---|
+| **Create** | Pick surah and verses (searchable, with quick picks), reciter, translations, video or Shorts batch, background and features. Style the caption colours with presets or colour pickers, watch the **live preview** with the word highlight moving, or render an **exact preview frame** in about 2 seconds. Then render, with live progress, a log and cancel. |
+| **Library** | Watch rendered videos, copy the YouTube title and description in one click, download or delete. |
+| **Branding** | Channel name, handle, subscribe line, logo upload, intro/outro lengths, default caption colours. |
+| **Backgrounds** | Download clips from Pexels (your API key stays in your browser), upload your own, preview and remove clips. |
+
+Everything the studio does is also available from the command line (below).
+
+## Caption colours
+
+Defaults live in `channel.json` under `"colors"` (the studio's **Save as default** writes them there).
+Override per run with `--color-<name> "#RRGGBB"`:
+
+| Name | Colours |
+|---|---|
+| `arabic` | Arabic verse text |
+| `highlight` | the word being recited |
+| `glow` | glow around the highlighted word |
+| `english` / `bangla` | translations |
+| `reference` | the "Al-Fatihah 1:5" label |
+
+```bash
+node make-video.js --surah 67 --color-highlight "#7CFFC4" --color-glow "#00A86B"
+node make-video.js --surah 1 --from 5 --still preview.png   # one frame, to check colours quickly
+```
 
 ## 1. Set up your channel branding — `channel.json`
 

@@ -1,0 +1,432 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Quran Video Studio</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Amiri+Quran&family=Hind+Siliguri:wght@400;500&family=Poppins:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <script>
+    try { const t = localStorage.getItem('qvs-theme'); if (t) document.documentElement.dataset.theme = t; } catch {}
+  </script>
+</head>
+<body>
+<div class="app">
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 40 40" aria-hidden="true">
+        <rect x="9" y="9" width="22" height="22" rx="2"/>
+        <rect x="9" y="9" width="22" height="22" rx="2" transform="rotate(45 20 20)"/>
+        <circle cx="20" cy="20" r="4.5"/>
+      </svg>
+      <div>
+        <div class="brand-name" id="brandName">Quran Studio</div>
+        <div class="brand-sub">Video Studio</div>
+      </div>
+    </div>
+
+    <nav class="nav">
+      <button class="nav-item active" data-view="create">
+        <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Create
+      </button>
+      <button class="nav-item" data-view="library">
+        <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m10 9 5 3-5 3z"/></svg>Library
+        <span class="nav-count" id="libraryCount"></span>
+      </button>
+      <button class="nav-item" data-view="branding">
+        <svg viewBox="0 0 24 24"><path d="M12 3 4 7v6c0 4.4 3.4 7.7 8 8 4.6-.3 8-3.6 8-8V7z"/></svg>Branding
+      </button>
+      <button class="nav-item" data-view="backgrounds">
+        <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m3 16 5-5 4 4 3-3 6 6"/><circle cx="16" cy="9" r="1.5"/></svg>Backgrounds
+      </button>
+    </nav>
+
+    <div class="sidebar-foot">
+      <div class="status-pill" id="ffmpegStatus"><span class="dot"></span><span>Checking FFmpeg…</span></div>
+      <button class="icon-btn" id="themeToggle" title="Toggle light / dark theme" aria-label="Toggle theme">
+        <svg viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+      </button>
+    </div>
+  </aside>
+
+  <main class="main">
+    <!-- ================= CREATE ================= -->
+    <section class="view active" id="view-create">
+      <header class="page-head">
+        <div>
+          <h1>Create video</h1>
+          <p>Pick a passage, style the captions, then render a video or a batch of Shorts.</p>
+        </div>
+      </header>
+
+      <div class="create-grid">
+        <div class="stack">
+          <!-- Passage -->
+          <div class="card">
+            <div class="card-head"><h2>Passage</h2><span class="step">1</span></div>
+
+            <label class="label">Surah</label>
+            <div class="combo" id="surahCombo">
+              <button type="button" class="combo-btn" id="surahBtn" aria-haspopup="listbox">
+                <span class="combo-num" id="surahNum">1</span>
+                <span class="combo-main"><b id="surahName">Loading…</b><small id="surahMeta"></small></span>
+                <span class="combo-ar" id="surahArabic" dir="rtl"></span>
+                <svg class="chev" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>
+              </button>
+              <div class="combo-pop" id="surahPop" hidden>
+                <input type="search" id="surahSearch" placeholder="Search by name, meaning or number" autocomplete="off">
+                <ul id="surahList" role="listbox"></ul>
+              </div>
+            </div>
+
+            <div class="row-2">
+              <div>
+                <label class="label" for="fromVerse">From verse</label>
+                <input type="number" id="fromVerse" min="1" value="1">
+              </div>
+              <div>
+                <label class="label" for="toVerse">To verse <span class="hint" id="verseHint"></span></label>
+                <input type="number" id="toVerse" min="1" value="7">
+              </div>
+            </div>
+
+            <div class="chips" id="quickPicks">
+              <span class="chips-label">Quick picks</span>
+              <button class="chip" data-pick="full">Full surah</button>
+              <button class="chip" data-pick="2:255-255">Ayat al-Kursi</button>
+              <button class="chip" data-pick="2:285-286">End of Al-Baqarah</button>
+              <button class="chip" data-pick="18:1-10">Al-Kahf 1–10</button>
+              <button class="chip" data-pick="67:1-30">Al-Mulk</button>
+            </div>
+          </div>
+
+          <!-- Recitation -->
+          <div class="card">
+            <div class="card-head"><h2>Recitation &amp; translation</h2><span class="step">2</span></div>
+            <label class="label" for="reciter">Reciter</label>
+            <select id="reciter"></select>
+            <p class="field-note" id="reciterNote"></p>
+            <div class="row-2">
+              <div>
+                <label class="label" for="enTr">English</label>
+                <select id="enTr"></select>
+              </div>
+              <div>
+                <label class="label" for="bnTr">Bangla</label>
+                <select id="bnTr"></select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Output -->
+          <div class="card">
+            <div class="card-head"><h2>Output</h2><span class="step">3</span></div>
+
+            <label class="label">Mode</label>
+            <div class="segmented" id="modeSeg">
+              <button data-value="single" class="active">
+                <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/></svg>Single video
+              </button>
+              <button data-value="batch">
+                <svg viewBox="0 0 24 24"><rect x="4" y="3" width="7" height="12" rx="1.5"/><rect x="13" y="9" width="7" height="12" rx="1.5"/></svg>Short per verse
+              </button>
+            </div>
+
+            <div id="formatField">
+              <label class="label">Format</label>
+              <div class="segmented" id="formatSeg">
+                <button data-value="long" class="active">
+                  <svg viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2"/></svg>Video · 16:9
+                </button>
+                <button data-value="short">
+                  <svg viewBox="0 0 24 24"><rect x="7" y="2" width="10" height="20" rx="2"/></svg>Short · 9:16
+                </button>
+              </div>
+            </div>
+
+            <div id="groupField" hidden>
+              <label class="label" for="groupSeconds">Merge short verses until each Short is at least</label>
+              <div class="input-suffix"><input type="number" id="groupSeconds" min="0" max="170" value="0"><span>seconds</span></div>
+              <p class="field-note">0 = exactly one Short per verse.</p>
+            </div>
+
+            <label class="label" for="bgSelect">Background</label>
+            <select id="bgSelect"></select>
+          </div>
+
+          <!-- Features -->
+          <div class="card">
+            <div class="card-head"><h2>Features</h2><span class="step">4</span></div>
+            <div class="toggles">
+              <label class="toggle"><input type="checkbox" id="optHighlight" checked><span class="switch"></span>
+                <span><b>Word-by-word highlight</b><small>Glow follows the reciter word by word</small></span></label>
+              <label class="toggle"><input type="checkbox" id="optIntro" checked><span class="switch"></span>
+                <span><b>Intro card</b><small>Channel name, surah and reciter</small></span></label>
+              <label class="toggle"><input type="checkbox" id="optOutro" checked><span class="switch"></span>
+                <span><b>Outro card</b><small>Jazakallahu khairan, subscribe and share</small></span></label>
+              <label class="toggle"><input type="checkbox" id="optWatermark" checked><span class="switch"></span>
+                <span><b>Watermark</b><small>Logo or handle in the corner</small></span></label>
+              <label class="toggle"><input type="checkbox" id="optBismillah" checked><span class="switch"></span>
+                <span><b>Bismillah</b><small>Prepended when starting at verse 1</small></span></label>
+            </div>
+          </div>
+        </div>
+
+        <!-- Preview + style -->
+        <div class="stack sticky">
+          <div class="card preview-card">
+            <div class="card-head">
+              <h2>Preview</h2>
+              <div class="segmented sm" id="previewSeg">
+                <button data-value="live" class="active">Live</button>
+                <button data-value="frame">Rendered frame</button>
+              </div>
+            </div>
+            <div class="stage-wrap">
+              <div class="stage long" id="stage">
+                <div class="stage-live" id="stageLive">
+                  <div class="st-header" id="stHeader"></div>
+                  <div class="st-body" id="stBody">
+                    <div class="st-ar" id="stArabic" dir="rtl"></div>
+                    <div class="st-en" id="stEnglish"></div>
+                    <div class="st-bn" id="stBangla"></div>
+                    <div class="st-ref" id="stRef"></div>
+                  </div>
+                  <div class="st-wm" id="stWatermark"></div>
+                </div>
+                <img class="stage-frame" id="stageFrame" alt="Rendered preview frame" hidden>
+                <div class="stage-empty" id="stageEmpty" hidden>
+                  <p>Render a frame to see the exact output.</p>
+                  <button class="btn" id="btnFrameInline">Render preview frame</button>
+                </div>
+                <div class="stage-loading" id="stageLoading" hidden><span class="spinner"></span>Rendering frame…</div>
+              </div>
+            </div>
+            <p class="field-note center" id="previewNote">Live preview is an approximation. Use “Rendered frame” to see the exact result.</p>
+          </div>
+
+          <div class="card">
+            <div class="card-head">
+              <h2>Caption colours</h2>
+              <div class="head-btns">
+                <button class="btn ghost sm" id="btnResetColors">Reset</button>
+                <button class="btn ghost sm" id="btnSaveColors">Save as default</button>
+              </div>
+            </div>
+            <div class="presets" id="colorPresets"></div>
+            <div class="color-list" id="colorList"></div>
+          </div>
+
+          <div class="card render-card">
+            <div class="render-summary">
+              <div class="render-title" id="renderTitle"></div>
+              <div class="render-sub" id="renderSub"></div>
+            </div>
+            <div class="render-actions">
+              <button class="btn" id="btnPreviewFrame">
+                <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="12" cy="12" r="3"/></svg>Preview frame
+              </button>
+              <button class="btn primary" id="btnRender">
+                <svg viewBox="0 0 24 24"><path d="m7 4 13 8-13 8z"/></svg><span id="btnRenderLabel">Render video</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= LIBRARY ================= -->
+    <section class="view" id="view-library">
+      <header class="page-head">
+        <div>
+          <h1>Library</h1>
+          <p>Your rendered videos with ready-to-paste YouTube titles and descriptions.</p>
+        </div>
+        <div class="head-actions">
+          <input type="search" id="librarySearch" class="search" placeholder="Search videos">
+          <div class="segmented sm" id="libraryFilter">
+            <button data-value="all" class="active">All</button>
+            <button data-value="long">Videos</button>
+            <button data-value="short">Shorts</button>
+          </div>
+          <button class="icon-btn" id="btnRefreshLibrary" title="Refresh" aria-label="Refresh">
+            <svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>
+          </button>
+        </div>
+      </header>
+      <div class="library-grid" id="libraryGrid"></div>
+      <div class="empty" id="libraryEmpty" hidden>
+        <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m10 9 5 3-5 3z"/></svg>
+        <h3>No videos yet</h3>
+        <p>Rendered videos will appear here.</p>
+        <button class="btn primary" data-goto="create">Create your first video</button>
+      </div>
+    </section>
+
+    <!-- ================= BRANDING ================= -->
+    <section class="view" id="view-branding">
+      <header class="page-head">
+        <div>
+          <h1>Branding</h1>
+          <p>Shown in the intro, outro, watermark and every YouTube description.</p>
+        </div>
+        <div class="head-actions">
+          <button class="btn primary" id="btnSaveBranding">Save changes</button>
+        </div>
+      </header>
+
+      <div class="branding-grid">
+        <div class="card">
+          <div class="card-head"><h2>Channel</h2></div>
+          <label class="label" for="chName">Channel name</label>
+          <input id="chName" maxlength="80" placeholder="Al-Bayaan Quran">
+          <label class="label" for="chHandle">YouTube handle</label>
+          <input id="chHandle" maxlength="60" placeholder="@YourChannel">
+          <label class="label" for="chSubscribe">Subscribe line (description)</label>
+          <textarea id="chSubscribe" rows="3" maxlength="300"></textarea>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h2>Logo</h2></div>
+          <div class="logo-drop" id="logoDrop">
+            <img id="logoPreview" alt="Channel logo" hidden>
+            <div class="logo-empty" id="logoEmpty">
+              <svg viewBox="0 0 24 24"><path d="M12 16V4m0 0-4 4m4-4 4 4M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>
+              <b>Drop a logo here</b><small>Transparent PNG works best · max 8 MB</small>
+            </div>
+            <input type="file" id="logoInput" accept="image/png,image/jpeg,image/webp" hidden>
+          </div>
+          <div class="btn-row">
+            <button class="btn" id="btnChooseLogo">Choose file</button>
+            <button class="btn ghost danger-text" id="btnRemoveLogo">Remove</button>
+          </div>
+          <p class="field-note">Without a logo, your handle is used as a text watermark.</p>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h2>Intro &amp; outro length</h2></div>
+          <table class="mini-table">
+            <thead><tr><th></th><th>Video</th><th>Short</th></tr></thead>
+            <tbody>
+              <tr><td>Intro</td>
+                <td><div class="input-suffix"><input type="number" id="introLong" min="0" max="20" step="0.5"><span>s</span></div></td>
+                <td><div class="input-suffix"><input type="number" id="introShort" min="0" max="20" step="0.5"><span>s</span></div></td></tr>
+              <tr><td>Outro</td>
+                <td><div class="input-suffix"><input type="number" id="outroLong" min="0" max="20" step="0.5"><span>s</span></div></td>
+                <td><div class="input-suffix"><input type="number" id="outroShort" min="0" max="20" step="0.5"><span>s</span></div></td></tr>
+            </tbody>
+          </table>
+          <p class="field-note">Set to 0 to skip it for that format.</p>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h2>Default caption colours</h2></div>
+          <div class="swatch-row" id="defaultSwatches"></div>
+          <p class="field-note">Change these from <a href="#" data-goto="create">Create → Caption colours → Save as default</a>.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= BACKGROUNDS ================= -->
+    <section class="view" id="view-backgrounds">
+      <header class="page-head">
+        <div>
+          <h1>Backgrounds</h1>
+          <p>Clips here are cross-faded behind your captions. Landscape clips are used for videos, portrait clips for Shorts.</p>
+        </div>
+      </header>
+
+      <div class="bg-grid">
+        <div class="card">
+          <div class="card-head"><h2>Download from Pexels</h2><span class="badge">Free</span></div>
+          <label class="label" for="pexelsKey">Pexels API key
+            <a class="hint link" href="https://www.pexels.com/api/" target="_blank" rel="noopener">Get a free key ↗</a></label>
+          <input type="password" id="pexelsKey" placeholder="Paste your API key" autocomplete="off">
+          <p class="field-note">Stored only in this browser.</p>
+          <label class="label" for="pexelsQuery">Search</label>
+          <input id="pexelsQuery" placeholder="Empty = mosques, Islamic architecture, desert, sky, ocean…">
+          <div class="row-2">
+            <div>
+              <label class="label" for="pexelsCount">Clips per search</label>
+              <input type="number" id="pexelsCount" min="1" max="15" value="3">
+            </div>
+            <div>
+              <label class="label" for="pexelsOrientation">Orientation</label>
+              <select id="pexelsOrientation">
+                <option value="both">Both</option>
+                <option value="landscape">Landscape (videos)</option>
+                <option value="portrait">Portrait (Shorts)</option>
+              </select>
+            </div>
+          </div>
+          <button class="btn primary full" id="btnFetchBg">Download clips</button>
+          <p class="field-note">Review downloaded clips and remove any that aren't suitable, e.g. ones showing people.</p>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h2>Upload your own</h2></div>
+          <div class="logo-drop small" id="bgDrop">
+            <div class="logo-empty">
+              <svg viewBox="0 0 24 24"><path d="M12 16V4m0 0-4 4m4-4 4 4M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>
+              <b>Drop videos or images</b><small>MP4, MOV, WebM, JPG, PNG</small>
+            </div>
+            <input type="file" id="bgInput" accept="video/*,image/*" multiple hidden>
+          </div>
+          <label class="label" for="bgUploadOrientation">Use for</label>
+          <select id="bgUploadOrientation">
+            <option value="landscape">Videos (landscape)</option>
+            <option value="portrait">Shorts (portrait)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="section-head">
+        <h2>Your clips</h2>
+        <div class="segmented sm" id="bgFilter">
+          <button data-value="landscape" class="active">Landscape</button>
+          <button data-value="portrait">Portrait</button>
+        </div>
+      </div>
+      <div class="clip-grid" id="clipGrid"></div>
+      <div class="empty" id="clipEmpty" hidden>
+        <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m3 16 5-5 4 4 3-3 6 6"/></svg>
+        <h3>No clips yet</h3>
+        <p>Without clips, videos use an animated gradient background.</p>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- Job progress -->
+<div class="job" id="job" hidden>
+  <div class="job-head">
+    <div class="job-title"><span class="job-icon" id="jobIcon"></span><b id="jobTitle">Rendering</b></div>
+    <div class="job-head-btns">
+      <button class="icon-btn sm" id="jobLogToggle" title="Show log" aria-label="Show log">
+        <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+      </button>
+      <button class="icon-btn sm" id="jobClose" title="Hide" aria-label="Hide">
+        <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+    </div>
+  </div>
+  <div class="job-step" id="jobStep"></div>
+  <div class="progress"><div class="bar" id="jobBar"></div></div>
+  <div class="job-meta"><span id="jobPct">0%</span><span id="jobElapsed">0:00</span></div>
+  <pre class="job-log" id="jobLog" hidden></pre>
+  <div class="job-error" id="jobError" hidden></div>
+  <div class="job-outputs" id="jobOutputs"></div>
+  <div class="job-actions">
+    <button class="btn sm danger" id="jobCancel">Cancel</button>
+    <button class="btn sm primary" id="jobOpenLibrary" hidden>Open library</button>
+  </div>
+</div>
+
+<div class="toasts" id="toasts"></div>
+<script src="app.js"></script>
+</body>
+</html>
