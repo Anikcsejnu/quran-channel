@@ -7,8 +7,10 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const {
-  RECITERS, TRANSLATIONS, TRANSLATION_NAMES, DEFAULT_COLORS, DEFAULT_SIZES, SIZE_RANGE, DEFAULT_CHANNEL, FFMPEG,
+  RECITERS, TRANSLATIONS, TRANSLATION_NAMES, DEFAULT_COLORS, DEFAULT_SIZES, SIZE_RANGE, DEFAULT_CHANNEL,
+  FFMPEG, FFPROBE, MAX_REEL_CLIPS,
 } = require('./make-video.js');
+const { execFile } = require('child_process');
 
 const ROOT = __dirname;
 const PORT = parseInt(process.env.PORT || '4173', 10);
@@ -78,9 +80,17 @@ function mediaPath(urlPath) {
 }
 
 // Static file with HTTP Range support so <video> can seek
-function serveFile(req, res, file) {
+function serveFile(req, res, file, cacheable = false) {
   if (!file || !fs.existsSync(file) || !fs.statSync(file).isFile()) return fail(res, 404, 'Not found');
-  const size = fs.statSync(file).size;
+  const st = fs.statSync(file);
+  const size = st.size;
+  // Validators so the browser picks up updated UI files instead of reusing a stale copy
+  const lastModified = st.mtime.toUTCString();
+  res.setHeader('Last-Modified', lastModified);
+  if (!req.headers.range && req.headers['if-modified-since'] === lastModified) {
+    res.writeHead(304);
+    return res.end();
+  }
   const type = MIME[path.extname(file).toLowerCase()] || 'application/octet-stream';
   const range = /bytes=(\d*)-(\d*)/.exec(req.headers.range || '');
   if (range) {
@@ -90,7 +100,10 @@ function serveFile(req, res, file) {
     res.writeHead(206, { 'Content-Type': type, 'Accept-Ranges': 'bytes', 'Content-Range': `bytes ${start}-${end}/${size}`, 'Content-Length': end - start + 1 });
     return fs.createReadStream(file, { start, end }).pipe(res);
   }
-  res.writeHead(200, { 'Content-Type': type, 'Content-Length': size, 'Accept-Ranges': 'bytes', 'Cache-Control': 'no-cache' });
+  res.writeHead(200, {
+    'Content-Type': type, 'Content-Length': size, 'Accept-Ranges': 'bytes',
+    'Cache-Control': cacheable ? 'max-age=86400' : 'no-cache',
+  });
   fs.createReadStream(file).pipe(res);
 }
 
@@ -115,6 +128,56 @@ async function cachedJson(url, name) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify(json));
   return json;
+}
+
+// ---------- background clips ----------
+
+const THUMBS = path.join(ROOT, 'cache', 'thumbs');
+const clipMetaCache = new Map();
+
+function backgroundPath(id) {
+  const file = path.resolve(BACKGROUNDS, String(id || ''));
+  return file.startsWith(BACKGROUNDS + path.sep) && fs.existsSync(file) && fs.statSync(file).isFile()
+    && (VIDEO_RE.test(file) || IMAGE_RE.test(file)) ? file : null;
+}
+
+const run = (bin, args) => new Promise((resolve, reject) =>
+  execFile(bin, args, { windowsHide: true }, (err, stdout) => (err ? reject(err) : resolve(stdout))));
+
+// Width, height and duration (cached per file + mtime)
+async function clipMeta(file) {
+  const st = fs.statSync(file);
+  const key = `${file}|${st.mtimeMs}`;
+  if (clipMetaCache.has(key)) return clipMetaCache.get(key);
+  let meta = { width: 0, height: 0, duration: 0 };
+  if (FFPROBE) {
+    try {
+      const out = JSON.parse(await run(FFPROBE, ['-v', 'error', '-select_streams', 'v:0',
+        '-show_entries', 'stream=width,height:format=duration', '-of', 'json', file]));
+      const s = (out.streams || [])[0] || {};
+      meta = { width: s.width || 0, height: s.height || 0, duration: VIDEO_RE.test(file) ? parseFloat(out.format?.duration) || 0 : 0 };
+    } catch { /* unreadable file: leave zeros */ }
+  }
+  clipMetaCache.set(key, meta);
+  return meta;
+}
+
+// Small JPEG thumbnail (1 s into videos), generated once and cached
+async function clipThumb(file) {
+  const st = fs.statSync(file);
+  const name = `${require('crypto').createHash('md5').update(file + st.mtimeMs).digest('hex')}.jpg`;
+  const out = path.join(THUMBS, name);
+  if (fs.existsSync(out)) return out;
+  if (!FFMPEG) return null;
+  fs.mkdirSync(THUMBS, { recursive: true });
+  const seek = VIDEO_RE.test(file) ? ['-ss', '1'] : [];
+  try {
+    await run(FFMPEG, ['-y', '-v', 'error', ...seek, '-i', file, '-frames:v', '1', '-vf', 'scale=480:-2', '-q:v', '4', out]);
+  } catch {
+    // Clips shorter than 1 s: take the first frame instead
+    await run(FFMPEG, ['-y', '-v', 'error', '-i', file, '-frames:v', '1', '-vf', 'scale=480:-2', '-q:v', '4', out]).catch(() => {});
+  }
+  return fs.existsSync(out) ? out : null;
 }
 
 // ---------- jobs (one at a time) ----------
@@ -218,11 +281,17 @@ function buildArgs(o) {
   if (o.outro === false) a.push('--no-outro');
   if (o.watermark === false) a.push('--no-watermark');
   if (o.bismillah === false) a.push('--no-bismillah');
+  // bg: 'auto' | 'gradient' | [clip ids in play order] (a single id string is still accepted)
   if (o.bg === 'gradient') a.push('--bg', 'gradient');
   else if (o.bg && o.bg !== 'auto') {
-    const file = path.resolve(BACKGROUNDS, o.bg);
-    if (!file.startsWith(BACKGROUNDS + path.sep) || !fs.existsSync(file)) throw bad('Background file not found');
-    a.push('--bg', file);
+    const ids = Array.isArray(o.bg) ? o.bg : [o.bg];
+    if (!ids.length) throw bad('Select at least one background clip');
+    if (ids.length > MAX_REEL_CLIPS) throw bad(`Select at most ${MAX_REEL_CLIPS} background clips`);
+    for (const id of ids) {
+      const file = backgroundPath(id);
+      if (!file) throw bad(`Background not found: ${id}`);
+      a.push('--bg', file);
+    }
   }
   for (const k of Object.keys(DEFAULT_COLORS)) {
     const c = o.colors && o.colors[k];
@@ -384,14 +453,34 @@ async function api(req, res, url) {
   if (route === 'GET /api/backgrounds') {
     const credits = fs.existsSync(path.join(BACKGROUNDS, 'credits.json'))
       ? JSON.parse(fs.readFileSync(path.join(BACKGROUNDS, 'credits.json'), 'utf8')) : {};
-    const items = walk(BACKGROUNDS, n => VIDEO_RE.test(n) || IMAGE_RE.test(n)).map(file => ({
-      id: path.relative(BACKGROUNDS, file).split(path.sep).join('/'),
-      name: path.basename(file),
-      orientation: path.relative(BACKGROUNDS, file).split(path.sep)[0],
-      type: VIDEO_RE.test(file) ? 'video' : 'image',
-      url: mediaUrl(file), size: fs.statSync(file).size, credit: credits[path.basename(file)] || '',
+    const files = walk(BACKGROUNDS, n => VIDEO_RE.test(n) || IMAGE_RE.test(n));
+    const items = await Promise.all(files.map(async file => {
+      const id = path.relative(BACKGROUNDS, file).split(path.sep).join('/');
+      const st = fs.statSync(file);
+      const meta = await clipMeta(file);
+      const folder = id.split('/')[0];
+      // Folder decides how the renderer uses it; fall back to the clip's own shape for loose files
+      const orientation = ['landscape', 'portrait'].includes(folder) ? folder
+        : meta.height > meta.width ? 'portrait' : 'landscape';
+      return {
+        id, name: path.basename(file), orientation, folder: id.includes('/') ? folder : '',
+        // Actual shape of the clip (a landscape clip can live in the portrait folder)
+        shape: meta.width && meta.height ? (meta.height > meta.width ? 'portrait' : 'landscape') : orientation,
+        type: VIDEO_RE.test(file) ? 'video' : 'image',
+        url: mediaUrl(file), thumb: `/api/backgrounds/thumb?id=${encodeURIComponent(id)}&v=${Math.round(st.mtimeMs)}`,
+        size: st.size, modified: st.mtimeMs, ...meta, credit: credits[path.basename(file)] || '',
+      };
     }));
-    return send(res, 200, { items });
+    items.sort((a, b) => a.id.localeCompare(b.id));
+    return send(res, 200, { items, maxClips: MAX_REEL_CLIPS });
+  }
+
+  if (route === 'GET /api/backgrounds/thumb') {
+    const file = backgroundPath(url.searchParams.get('id'));
+    if (!file) return fail(res, 404, 'Not found');
+    const thumb = await clipThumb(file);
+    if (!thumb) return IMAGE_RE.test(file) ? serveFile(req, res, file) : fail(res, 500, 'Could not create thumbnail');
+    return serveFile(req, res, thumb, true);
   }
 
   if (route === 'DELETE /api/backgrounds') {

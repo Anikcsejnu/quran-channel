@@ -84,6 +84,8 @@ function parseArgs() {
   for (let i = 0; i < argv.length; i++) {
     const k = argv[i].replace(/^--/, '');
     if (BOOL_FLAGS.has(k)) { a[k] = true; continue; }
+    // --bg can be repeated: several clips/images play in that order
+    if (k === 'bg') { (a.bg = a.bg || []).push(argv[++i]); continue; }
     a[k] = argv[++i];
   }
   if (a['no-bismillah']) a.bismillah = false;
@@ -97,7 +99,8 @@ function parseArgs() {
   --bn <name>             ${Object.keys(TRANSLATIONS.bn).join(', ')}
   --format <long|short>   16:9 YouTube video or 9:16 Shorts (default long)
   --bg <file|folder>      background image/video, or a folder of them to cycle through
-                          (default: ./backgrounds if it has media, else animated gradient)
+                          (default: ./backgrounds if it has media, else animated gradient).
+                          Repeat --bg to pick several files; they cross-fade in that order.
   --batch                 one Short per verse (use --group-seconds to merge very short verses)
   --group-seconds <n>     with --batch: join consecutive verses until each Short is at least n seconds
   --no-highlight          disable word-by-word Arabic highlighting
@@ -442,7 +445,22 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 // ---------- Background ----------
 
 // A folder of clips/images becomes one cross-faded "reel" video that is looped behind the captions.
+const MAX_REEL_CLIPS = 40;
+
 function resolveBackground(bgArg, fmt, rotate) {
+  if (Array.isArray(bgArg)) {
+    if (bgArg.length > 1) {
+      // Explicit selection: keep the user's order, no rotation
+      const files = bgArg.map(f => path.resolve(f));
+      const missing = files.find(f => !fs.existsSync(f) || !fs.statSync(f).isFile());
+      if (missing) throw new Error(`Background not found: ${missing}`);
+      const bad = files.find(f => !VIDEO_RE.test(f) && !IMAGE_RE.test(f));
+      if (bad) throw new Error(`Not an image or video: ${bad}`);
+      const used = files.slice(0, MAX_REEL_CLIPS);
+      return { type: 'video', file: buildReel(used, fmt), used };
+    }
+    bgArg = bgArg[0];
+  }
   if (bgArg === 'gradient') return { type: 'gradient' };
   let bg = bgArg ? path.resolve(bgArg) : path.join(ROOT, 'backgrounds');
   if (!fs.existsSync(bg)) {
@@ -473,6 +491,8 @@ function buildReel(files, fmt) {
   if (fs.existsSync(out)) return out;
   console.log(`• Building background reel from ${files.length} clips`);
   fs.mkdirSync(path.dirname(out), { recursive: true });
+  // Write to a temp name and rename when done, so a cancelled render never leaves a broken cached reel
+  const tmp = out.replace(/\.mp4$/, '.partial.mp4');
 
   const inputs = [], chains = [], lens = [];
   files.forEach((f, i) => {
@@ -501,7 +521,8 @@ function buildReel(files, fmt) {
     acc = offset + lens[i];
   }
   ffmpeg([...inputs, '-filter_complex', chains.join(';'), '-map', '[out]', '-an',
-    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p', out]);
+    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p', tmp]);
+  fs.renameSync(tmp, out);
   return out;
 }
 
@@ -677,7 +698,8 @@ async function main() {
   const bismillahRec = surah === 1 ? rec : await loadRecitation(1, reciter);
 
   const background = resolveBackground(args.bg, fmt, surah);
-  console.log(`• Background: ${background.type === 'gradient' ? 'animated gradient' : path.basename(background.file)}`);
+  console.log(`• Background: ${background.type === 'gradient' ? 'animated gradient'
+    : background.used && background.used.length > 1 ? `${background.used.length} clips` : path.basename(background.file)}`);
   const ctx = { data, args, fmt, reciter, rec, bismillahRec, channel, background, colors: resolveColors(channel, args), sizes: resolveSizes(channel, args) };
 
   const needsBismillah = args.bismillah && data.chapter.bismillah_pre;
@@ -714,4 +736,7 @@ if (require.main === module) {
   main().catch(e => { console.error('\n✗', e.message); process.exit(1); });
 }
 
-module.exports = { RECITERS, TRANSLATIONS, TRANSLATION_NAMES, DEFAULT_COLORS, DEFAULT_SIZES, SIZE_RANGE, FORMATS, DEFAULT_CHANNEL, FFMPEG };
+module.exports = {
+  RECITERS, TRANSLATIONS, TRANSLATION_NAMES, DEFAULT_COLORS, DEFAULT_SIZES, SIZE_RANGE, FORMATS, DEFAULT_CHANNEL,
+  FFMPEG, FFPROBE, MAX_REEL_CLIPS,
+};

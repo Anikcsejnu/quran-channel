@@ -93,7 +93,7 @@ let highlightIndex = -1;
 const state = Object.assign({
   surah: 1, from: 1, to: 7,
   reciter: 'alafasy', en: 'saheeh', bn: 'taisirul',
-  mode: 'single', format: 'long', groupSeconds: 0, bg: 'auto',
+  mode: 'single', format: 'long', groupSeconds: 0, bgMode: 'auto', bgSelection: [],
   highlight: true, intro: true, outro: true, watermark: true, bismillah: true,
   colors: null, sizes: null, preview: 'live',
 }, store.get('qvs-state', {}));
@@ -110,7 +110,8 @@ function payload() {
     format: effectiveFormat(), batch: state.mode === 'batch', groupSeconds: state.groupSeconds,
     highlight: state.highlight, intro: state.intro, outro: state.outro,
     watermark: state.watermark, bismillah: state.bismillah,
-    bg: state.bg, colors: state.colors, sizes: state.sizes,
+    bg: state.bgMode === 'custom' ? state.bgSelection : state.bgMode,
+    colors: state.colors, sizes: state.sizes,
   };
 }
 
@@ -266,8 +267,6 @@ $('#bnTr').addEventListener('change', e => { state.bn = e.target.value; saveStat
 bindSegmented($('#modeSeg'), v => { state.mode = v; applyMode(); });
 bindSegmented($('#formatSeg'), v => { state.format = v; applyMode(); });
 $('#groupSeconds').addEventListener('change', e => { state.groupSeconds = Math.max(0, Math.min(170, +e.target.value || 0)); saveState(); updateSummary(); });
-$('#bgSelect').addEventListener('change', e => { state.bg = e.target.value; saveState(); invalidateFrame(); });
-
 function applyMode() {
   const batch = state.mode === 'batch';
   $('#groupField').hidden = !batch;
@@ -275,24 +274,333 @@ function applyMode() {
   setSegmented($('#formatSeg'), effectiveFormat());
   $('#btnRenderLabel').textContent = batch ? 'Render Shorts' : 'Render video';
   $('#stage').className = `stage ${effectiveFormat()}`;
-  fillBackgroundSelect();
+  renderBackgroundControls();
   saveState();
   updateSummary();
   renderStage();
   invalidateFrame();
 }
 
-function fillBackgroundSelect() {
-  const orientation = effectiveFormat() === 'short' ? 'portrait' : 'landscape';
-  const clips = backgrounds.filter(b => b.orientation === orientation);
-  const opts = [
-    { id: 'auto', name: clips.length ? `Auto — cycle ${clips.length} ${orientation} clip${clips.length > 1 ? 's' : ''}` : 'Auto — animated gradient (no clips yet)' },
-    { id: 'gradient', name: 'Animated gradient' },
-    ...clips.map(c => ({ id: c.id, name: `Clip: ${c.name}` })),
-  ];
-  if (!opts.some(o => o.id === state.bg)) state.bg = 'auto';
-  fillSelect($('#bgSelect'), opts, state.bg);
+// ---------- Background selection ----------
+
+const REEL_CLIP_SECONDS = 12;
+const REEL_FADE = 1.2;
+const orientationFor = fmt => (fmt === 'short' ? 'portrait' : 'landscape');
+const clipById = id => backgrounds.find(b => b.id === id);
+const fmtDur = s => (s ? fmtClock(s) : '');
+
+// Clips used by "Auto": the format's folder if it has media, else everything — same rule as make-video.js
+function autoClips() {
+  const o = orientationFor(effectiveFormat());
+  const inFolder = backgrounds.filter(b => b.folder === o);
+  const list = inFolder.length ? inFolder : backgrounds.filter(b => !b.folder);
+  if (!list.length) return [];
+  const r = state.surah % list.length;
+  return [...list.slice(r), ...list.slice(0, r)].slice(0, 12);
 }
+
+// The clips that will actually play, in order
+function activeClips() {
+  if (state.bgMode === 'gradient') return [];
+  if (state.bgMode === 'custom') return state.bgSelection.map(clipById).filter(Boolean);
+  return autoClips();
+}
+
+function reelSeconds(clips) {
+  if (!clips.length) return 0;
+  const total = clips.reduce((s, c) => s + (c.type === 'video' ? Math.min(REEL_CLIP_SECONDS, c.duration || REEL_CLIP_SECONDS) : REEL_CLIP_SECONDS), 0);
+  return Math.max(0, total - REEL_FADE * (clips.length - 1));
+}
+
+function renderBackgroundControls() {
+  // Drop selections whose files were deleted
+  state.bgSelection = state.bgSelection.filter(id => clipById(id));
+  if (state.bgMode === 'custom' && !state.bgSelection.length && !$('#bgPicker').open) state.bgMode = 'auto';
+  setSegmented($('#bgModeSeg'), state.bgMode);
+
+  const o = orientationFor(effectiveFormat());
+  const auto = autoClips();
+  $('#bgHint').textContent = state.bgMode === 'auto'
+    ? (auto.length ? `cycles ${auto.length} clip${auto.length > 1 ? 's' : ''}` : 'no clips yet — gradient')
+    : state.bgMode === 'gradient' ? 'animated gradient' : `${state.bgSelection.length} selected`;
+
+  const custom = state.bgMode === 'custom';
+  $('#bgSelected').hidden = !custom;
+  if (custom) {
+    const strip = $('#bgStrip');
+    strip.classList.toggle('portrait', o === 'portrait');
+    strip.innerHTML = state.bgSelection.map((id, i) => {
+      const c = clipById(id);
+      return `<li draggable="true" tabindex="0" data-id="${esc(id)}" title="${esc(c.name)} — drag to reorder"
+          aria-label="${i + 1}. ${esc(c.name)}. Use arrow keys to move, Delete to remove.">
+        <img src="${esc(c.thumb)}" alt="" loading="lazy">
+        <span class="n">${i + 1}</span>
+        <button class="rm" data-remove="${esc(id)}" aria-label="Remove ${esc(c.name)}">${ICONS.x}</button>
+      </li>`;
+    }).join('') + `<li class="add" id="bgStripAdd" title="Add clips" aria-label="Add clips" tabindex="0">
+        <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></li>`;
+    const clips = activeClips();
+    const mismatched = clips.filter(c => c.shape !== o).length;
+    $('#bgSelectedNote').innerHTML = clips.length
+      ? `Reel ≈ ${fmtClock(reelSeconds(clips))}, loops` + (mismatched ? ` · <span style="color:var(--gold)">${mismatched} will be centre-cropped</span>` : '')
+      : 'No clips selected';
+  }
+  renderStageBackground();
+}
+
+function setBgMode(mode) {
+  state.bgMode = mode;
+  if (mode === 'custom' && !state.bgSelection.length) { openPicker(); return; }
+  renderBackgroundControls();
+  saveState();
+  invalidateFrame();
+}
+bindSegmented($('#bgModeSeg'), setBgMode);
+$('#btnEditBg').addEventListener('click', () => openPicker());
+
+function commitSelection(ids) {
+  state.bgSelection = ids;
+  if (!ids.length && state.bgMode === 'custom') state.bgMode = 'auto';
+  renderBackgroundControls();
+  saveState();
+  invalidateFrame();
+}
+
+// Strip: remove, add, drag-and-drop and keyboard reordering
+$('#bgStrip').addEventListener('click', e => {
+  const rm = e.target.closest('[data-remove]');
+  if (rm) { e.stopPropagation(); commitSelection(state.bgSelection.filter(id => id !== rm.dataset.remove)); return; }
+  if (e.target.closest('#bgStripAdd')) openPicker();
+});
+$('#bgStrip').addEventListener('keydown', e => {
+  const li = e.target.closest('li');
+  if (!li) return;
+  if (li.id === 'bgStripAdd') { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openPicker(); } return; }
+  const sel = [...state.bgSelection];
+  const i = sel.indexOf(li.dataset.id);
+  if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); commitSelection(sel.filter(x => x !== li.dataset.id)); return; }
+  const dir = e.key === 'ArrowLeft' ? -1 : e.key === 'ArrowRight' ? 1 : 0;
+  if (!dir || i + dir < 0 || i + dir >= sel.length) return;
+  e.preventDefault();
+  [sel[i], sel[i + dir]] = [sel[i + dir], sel[i]];
+  commitSelection(sel);
+  $(`#bgStrip li[data-id="${CSS.escape(li.dataset.id)}"]`)?.focus();
+});
+
+let dragId = null;
+$('#bgStrip').addEventListener('dragstart', e => {
+  const li = e.target.closest('li[data-id]');
+  if (!li) return;
+  dragId = li.dataset.id;
+  li.classList.add('dragging');
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', dragId);
+});
+$('#bgStrip').addEventListener('dragover', e => {
+  if (!dragId) return;
+  e.preventDefault();
+  $$('#bgStrip li').forEach(li => li.classList.remove('drop-before'));
+  const over = e.target.closest('li');
+  if (over && over.dataset.id !== dragId) over.classList.add('drop-before');
+});
+$('#bgStrip').addEventListener('drop', e => {
+  e.preventDefault();
+  const over = e.target.closest('li');
+  if (!dragId || !over) return;
+  const sel = state.bgSelection.filter(id => id !== dragId);
+  const at = over.id === 'bgStripAdd' ? sel.length : sel.indexOf(over.dataset.id);
+  sel.splice(at < 0 ? sel.length : at, 0, dragId);
+  commitSelection(sel);
+});
+$('#bgStrip').addEventListener('dragend', () => {
+  dragId = null;
+  $$('#bgStrip li').forEach(li => li.classList.remove('dragging', 'drop-before'));
+});
+
+// Live preview: show the first clip that will play behind the captions
+function renderStageBackground() {
+  const holder = $('#stageBg');
+  const first = activeClips()[0];
+  if (!first) { holder.innerHTML = ''; holder.dataset.id = ''; return; }
+  if (holder.dataset.id === first.id) return;
+  holder.dataset.id = first.id;
+  holder.innerHTML = first.type === 'video'
+    ? `<video src="${esc(first.url)}" poster="${esc(first.thumb)}" muted loop autoplay playsinline preload="metadata"></video>`
+    : `<img src="${esc(first.url)}" alt="">`;
+}
+
+// ---------- Background picker ----------
+
+let draft = [];
+let pickerFilter = 'match';
+let pickerType = 'any';
+let previewId = null;
+
+function openPicker() {
+  draft = [...state.bgSelection];
+  previewId = draft[0] || null;
+  const o = orientationFor(effectiveFormat());
+  $('#pickerFilterMatch').textContent = o === 'portrait' ? 'Portrait (Shorts)' : 'Landscape (Videos)';
+  // Show everything when the matching folder is empty
+  pickerFilter = backgrounds.some(b => b.orientation === o) ? 'match' : 'all';
+  setSegmented($('#pickerFilter'), pickerFilter);
+  renderPicker();
+  renderPickerPreview();
+  $('#bgPicker').showModal();
+}
+
+function pickerItems() {
+  const o = orientationFor(effectiveFormat());
+  return backgrounds.filter(b => (pickerFilter === 'all' || b.orientation === o) && (pickerType === 'any' || b.type === pickerType));
+}
+
+function renderPicker() {
+  const o = orientationFor(effectiveFormat());
+  const items = pickerItems();
+  const grid = $('#pickerGrid');
+  grid.classList.toggle('portrait', o === 'portrait' && pickerFilter === 'match');
+  $('#pickerEmpty').hidden = items.length > 0;
+  grid.innerHTML = items.map(b => {
+    const n = draft.indexOf(b.id) + 1;
+    return `
+    <button class="tile ${n ? 'selected' : ''}" role="option" aria-selected="${!!n}" data-id="${esc(b.id)}"
+        title="${esc(b.name)}">
+      <span class="media">
+        <img src="${esc(b.thumb)}" alt="" loading="lazy">
+        <span class="shade"></span>
+        <span class="check">${n || ''}</span>
+        <span class="chips">
+          ${b.shape !== o ? '<span class="pill crop">Cropped</span>' : ''}
+          <span class="pill">${b.type === 'video' ? fmtDur(b.duration) || 'Video' : 'Image'}</span>
+        </span>
+        <span class="name">${esc(b.name)}</span>
+      </span>
+    </button>`;
+  }).join('');
+  renderPickerSummary();
+}
+
+function renderPickerSummary() {
+  const clips = draft.map(clipById).filter(Boolean);
+  const o = orientationFor(effectiveFormat());
+  const crop = clips.filter(c => c.shape !== o).length;
+  $('#pickerSummary').innerHTML = clips.length
+    ? `<b>${clips.length}</b> selected · reel ≈ <b>${fmtClock(reelSeconds(clips))}</b>, loops for the whole video`
+      + (crop ? ` · <span class="warn">${crop} will be centre-cropped</span>` : '')
+      + (clips.length > maxClips ? ` · <span class="warn">only the first ${maxClips} are used</span>` : '')
+    : 'Nothing selected — click clips to add them in play order';
+  $('#pickerApply').textContent = clips.length ? `Use ${clips.length} clip${clips.length > 1 ? 's' : ''}` : 'Use Auto';
+}
+
+function renderPickerPreview() {
+  const c = clipById(previewId);
+  const stage = $('#ppStage');
+  const o = orientationFor(effectiveFormat());
+  stage.classList.toggle('portrait', !!c && c.shape === 'portrait');
+  if (!c) {
+    stage.innerHTML = '<span class="pp-placeholder">Hover or focus a clip to preview it</span>';
+    $('#ppMeta').innerHTML = '';
+    return;
+  }
+  if (stage.dataset.id !== c.id) {
+    stage.dataset.id = c.id;
+    stage.innerHTML = c.type === 'video'
+      ? `<video src="${esc(c.url)}" poster="${esc(c.thumb)}" muted loop autoplay playsinline></video>`
+      : `<img src="${esc(c.url)}" alt="">`;
+    // Show which part survives when a landscape clip is cropped for a Short
+    if (o === 'portrait' && c.shape === 'landscape') {
+      const w = (9 / 16) / (16 / 9) * 100;
+      stage.insertAdjacentHTML('beforeend', `<span class="crop-guide" style="left:${(100 - w) / 2}%;width:${w}%"></span>`);
+    }
+  }
+  const n = draft.indexOf(c.id) + 1;
+  $('#ppMeta').innerHTML = `
+    <h4>${esc(c.name)}</h4>
+    <dl>
+      <dt>Type</dt><dd>${c.type === 'video' ? 'Video' : 'Image (slow zoom)'}</dd>
+      ${c.width ? `<dt>Size</dt><dd>${c.width} × ${c.height}</dd>` : ''}
+      ${c.duration ? `<dt>Length</dt><dd>${fmtDur(c.duration)}${c.duration > REEL_CLIP_SECONDS ? ` (first ${REEL_CLIP_SECONDS}s used)` : ''}</dd>` : ''}
+      <dt>Folder</dt><dd>${esc(c.folder || 'backgrounds')}</dd>
+      <dt>File</dt><dd>${fmtSize(c.size)}</dd>
+      ${c.credit ? `<dt>Credit</dt><dd>${esc(c.credit)}</dd>` : ''}
+      <dt>Status</dt><dd>${n ? `Selected · plays ${ordinal(n)}` : 'Not selected'}</dd>
+    </dl>
+    ${o === 'portrait' && c.shape === 'landscape' ? '<div class="note">Landscape clip — only the area inside the dashed frame shows in a Short.</div>' : ''}
+    ${o === 'landscape' && c.shape === 'portrait' ? '<div class="note">Portrait clip — it will be zoomed to fill the 16:9 frame.</div>' : ''}`;
+}
+const ordinal = n => {
+  const s = ['th', 'st', 'nd', 'rd'];
+  const v = n % 100;
+  return n + (s[(v - 20) % 10] || s[v] || s[0]);
+};
+
+let maxClips = 40;
+
+function toggleDraft(id) {
+  const i = draft.indexOf(id);
+  if (i >= 0) draft.splice(i, 1); else draft.push(id);
+  previewId = id;
+  renderPicker();
+  renderPickerPreview();
+  $(`#pickerGrid .tile[data-id="${CSS.escape(id)}"]`)?.focus();
+}
+
+$('#pickerGrid').addEventListener('click', e => {
+  const t = e.target.closest('.tile');
+  if (t) toggleDraft(t.dataset.id);
+});
+$('#pickerGrid').addEventListener('mouseover', e => {
+  const t = e.target.closest('.tile');
+  if (t && t.dataset.id !== previewId) { previewId = t.dataset.id; renderPickerPreview(); }
+});
+$('#pickerGrid').addEventListener('focusin', e => {
+  const t = e.target.closest('.tile');
+  if (t && t.dataset.id !== previewId) { previewId = t.dataset.id; renderPickerPreview(); }
+});
+bindSegmented($('#pickerFilter'), v => { pickerFilter = v; renderPicker(); });
+bindSegmented($('#pickerType'), v => { pickerType = v; renderPicker(); });
+$('#pickerSelectAll').addEventListener('click', () => {
+  for (const b of pickerItems()) if (!draft.includes(b.id)) draft.push(b.id);
+  renderPicker();
+  renderPickerPreview();
+});
+$('#pickerClear').addEventListener('click', () => { draft = []; renderPicker(); renderPickerPreview(); });
+$('#pickerCancel').addEventListener('click', () => $('#bgPicker').close());
+$('#pickerClose').addEventListener('click', () => $('#bgPicker').close());
+$('#bgPicker').addEventListener('close', () => {
+  // Stop preview playback and fall back if "Choose clips" was picked but nothing chosen
+  $('#ppStage').innerHTML = '';
+  $('#ppStage').dataset.id = '';
+  if (state.bgMode === 'custom' && !state.bgSelection.length) state.bgMode = 'auto';
+  renderBackgroundControls();
+});
+$('#bgPicker').addEventListener('click', e => { if (e.target === $('#bgPicker')) $('#bgPicker').close(); });
+$('#pickerApply').addEventListener('click', () => {
+  state.bgMode = draft.length ? 'custom' : 'auto';
+  commitSelection(draft.slice(0, maxClips));
+  $('#bgPicker').close();
+  toast(draft.length ? `Background: ${Math.min(draft.length, maxClips)} clip${draft.length > 1 ? 's' : ''} selected` : 'Background set to Auto');
+});
+
+$('#pickerUpload').addEventListener('click', () => $('#pickerUploadInput').click());
+$('#pickerUploadInput').addEventListener('change', async e => {
+  const files = [...e.target.files];
+  e.target.value = '';
+  const orientation = orientationFor(effectiveFormat());
+  const added = [];
+  for (const f of files) {
+    try {
+      await api(`/api/backgrounds/upload?orientation=${orientation}&name=${encodeURIComponent(f.name)}`, { method: 'POST', body: f });
+      added.push(`${orientation}/${f.name.replace(/[^\w.\- ]/g, '_')}`);
+    } catch (err) { toast(`${f.name}: ${err.message}`, 'error'); }
+  }
+  await loadBackgrounds();
+  // Newly uploaded clips are selected straight away
+  for (const id of added) if (clipById(id) && !draft.includes(id)) draft.push(id);
+  if (added.length) toast(`Uploaded ${added.length} file${added.length > 1 ? 's' : ''}`);
+  renderPicker();
+  renderPickerPreview();
+});
 
 const TOGGLES = { optHighlight: 'highlight', optIntro: 'intro', optOutro: 'outro', optWatermark: 'watermark', optBismillah: 'bismillah' };
 for (const [id, key] of Object.entries(TOGGLES)) {
@@ -798,9 +1106,11 @@ let bgFilter = 'landscape';
 
 async function loadBackgrounds() {
   try {
-    backgrounds = (await api('/api/backgrounds')).items;
+    const data = await api('/api/backgrounds');
+    backgrounds = data.items;
+    maxClips = data.maxClips || maxClips;
     renderClips();
-    fillBackgroundSelect();
+    renderBackgroundControls();
   } catch (e) { toast(e.message, 'error'); }
 }
 
@@ -810,9 +1120,9 @@ function renderClips() {
   $('#clipGrid').innerHTML = items.map(b => `
     <div class="clip ${b.orientation}" data-id="${esc(b.id)}">
       ${b.type === 'video'
-        ? `<video src="${esc(b.url)}#t=1" muted loop playsinline preload="metadata"></video>`
-        : `<img src="${esc(b.url)}" alt="" loading="lazy">`}
-      <div class="cap"><b>${esc(b.name)}</b><span>${esc(b.credit || fmtSize(b.size))}</span></div>
+        ? `<video src="${esc(b.url)}" poster="${esc(b.thumb)}" muted loop playsinline preload="none"></video>`
+        : `<img src="${esc(b.thumb)}" alt="" loading="lazy">`}
+      <div class="cap"><b>${esc(b.name)}</b><span>${esc([b.type === 'video' ? fmtDur(b.duration) : 'Image', b.width ? `${b.width}×${b.height}` : '', b.credit || fmtSize(b.size)].filter(Boolean).join(' · '))}</span></div>
       <button class="icon-btn sm del" data-del title="Remove clip" aria-label="Remove clip">${ICONS.trash}</button>
     </div>`).join('');
 }
@@ -913,7 +1223,16 @@ async function init() {
   renderSizeControls();
   syncPassage();
 
-  backgrounds = (await api('/api/backgrounds').catch(() => ({ items: [] }))).items;
+  const bgData = await api('/api/backgrounds').catch(() => ({ items: [] }));
+  backgrounds = bgData.items;
+  maxClips = bgData.maxClips || maxClips;
+  // Older saved state stored a single clip id in "bg"
+  if (typeof state.bg === 'string') {
+    if (state.bg === 'gradient') state.bgMode = 'gradient';
+    else if (state.bg !== 'auto') { state.bgMode = 'custom'; state.bgSelection = [state.bg]; }
+    delete state.bg;
+  }
+  if (!Array.isArray(state.bgSelection)) state.bgSelection = [];
   applyMode();
   loadVerse();
   loadLibrary();
