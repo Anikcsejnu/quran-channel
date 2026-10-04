@@ -55,7 +55,7 @@ Open **http://localhost:4173**. The Studio only listens on your own computer (12
 node make-video.js --surah 112
 ```
 
-The video is written to `output/112_1-4_alafasy_long.mp4`, with a `.title.txt` and `.description.txt` next to it.
+The video is written to `output/Videos/112 - Al-Ikhlas/112_1-4_alafasy.mp4`, with a `.title.txt` and `.description.txt` next to it (see [Where videos are saved](#where-videos-are-saved)).
 
 Fonts (Amiri Quran, Hind Siliguri, Poppins) are downloaded automatically on the first render.
 
@@ -99,7 +99,35 @@ Click **Render video** (or **Render Shorts**). A panel shows progress, the curre
 
 ### Library
 
-Every rendered video, newest first: play it, **copy the YouTube title or description**, download it or delete it. Filter by Videos/Shorts or search.
+Every rendered video, newest first: play it, **copy the YouTube title or description**, download it or delete it. Each card shows its surah folder. Filter by Videos/Shorts or search.
+
+### Where videos are saved
+
+Videos are sorted by type and surah, so they're easy to find when uploading:
+
+```
+output/
+├── Videos/
+│   ├── 001 - Al-Fatihah/
+│   │   ├── 001_1-7_alafasy.mp4
+│   │   ├── 001_1-7_alafasy.title.txt
+│   │   └── 001_1-7_alafasy.description.txt
+│   └── 108 - Al-Kawthar/ …
+└── Shorts/
+    └── 112 - Al-Ikhlas/
+        ├── 112_1_alafasy.mp4          one per verse with "Short per verse"
+        ├── 112_2_alafasy.mp4
+        └── …
+```
+
+File names are `<surah>_<verses>_<reciter>.mp4`. Folder numbers are zero-padded so folders sort in Quran order.
+
+Videos rendered before this layout existed can be moved into it with:
+
+```bash
+node organize-output.js           # shows what would move
+node organize-output.js --apply   # moves them (with their title/description files)
+```
 
 ### Branding
 
@@ -203,7 +231,7 @@ flowchart TD
 
 ### Batch Shorts
 
-**Short per verse** (`--batch`) renders one 9:16 Short for every verse in the range into `output/<surah>_<Name>_shorts/`, each with its own title (`… #Shorts`) and description. With **Merge short verses** (`--group-seconds N`), consecutive verses are joined until each Short lasts at least N seconds. Shorts use the shorter intro/outro lengths from Branding.
+**Short per verse** (`--batch`) renders one 9:16 Short for every verse in the range into `output/Shorts/<NNN - Name>/`, each with its own title (`… #Shorts`) and description. With **Merge short verses** (`--group-seconds N`), consecutive verses are joined until each Short lasts at least N seconds. Shorts use the shorter intro/outro lengths from Branding.
 
 ### Preview frame
 
@@ -221,7 +249,11 @@ The server runs one render (or background download) at a time:
 
 For every video:
 
-- **`.title.txt`** — e.g. `Surah Al-Ikhlas | Mishary Rashid Alafasy | Arabic, English & Bangla Translation`, or `Surah Al-Baqarah 2:255 | The Cow ✨ #Shorts` for Shorts.
+- **`.title.txt`** — the surah name in **English and Bangla**, so the video is found by searches in either language:
+  - video: `Surah Al-Ikhlas | সূরা আল-ইখলাস | Mishary Rashid Alafasy | Arabic, English & Bangla Translation`
+  - Short: `Surah Al-Baqarah 2:255 | সূরা আল-বাকারা | The Cow ✨ #Shorts`
+
+  YouTube allows 100 characters, so when a reciter name or verse range makes the title too long, the ending is shortened step by step (e.g. to `… | বাংলা অনুবাদ`). The Bangla name also appears in the description, as a hashtag (`#সূরা_আল_ইখলাস`) and on the intro card.
 - **`.description.txt`** — an introduction, then 📖 surah · 📍 juz and verses · 🕋 place of revelation · 🎙️ reciter · 🌐 translators, your subscribe line and handle, background credits and hashtags.
 
 The introduction comes from **`intros.json`** — keyed by surah (`"112"`) or by an exact verse/range (`"2:255"`, `"2:285-286"`). Surahs without an entry use the short summary from Quran.com (Tafhim al-Qur'an).
@@ -299,7 +331,7 @@ node make-video.js --surah 1 --from 5 --still preview.png         # one frame, t
 | `--en` | saheeh, haleem, usmani, yusufali | saheeh |
 | `--bn` | taisirul, mujibur, rawai, zakaria | taisirul |
 | `--format` | `long` (1920×1080) or `short` (1080×1920) | long |
-| `--batch` | one Short per verse → `output/<surah>_<Name>_shorts/` | |
+| `--batch` | one Short per verse → `output/Shorts/<NNN - Name>/` | |
 | `--group-seconds` | with `--batch`: merge verses until each Short is ≥ n s | 0 |
 | `--bg` | image, video or folder; repeat to cross-fade several files in order; or `gradient` | `backgrounds/` or gradient |
 | `--bg-source` / `--bg-order` / `--bg-max` | Auto: `match`/`all` · `rotate`/`shuffle`/`name` · 1–40 | match · rotate · 12 |
@@ -336,9 +368,11 @@ quran-channel/
 ├── ui/                    Studio front end (index.html, styles.css, app.js)
 ├── channel.json           Branding and default style
 ├── intros.json            Description introductions
+├── surah-names-bn.json    Bangla surah names (114, in order) for titles, descriptions and the intro card
+├── organize-output.js     Moves older renders into output/Videos and output/Shorts
 ├── assets/                Uploaded logo
 ├── backgrounds/           Your clips: landscape/ (videos), portrait/ (Shorts), credits.json   [git-ignored]
-├── output/                Rendered videos + .title.txt + .description.txt                    [git-ignored]
+├── output/                Videos/<NNN - Name>/ and Shorts/<NNN - Name>/ with .title/.description [git-ignored]
 ├── fonts/                 Downloaded fonts                                                      [git-ignored]
 └── cache/                 API responses, audio, reels, thumbnails, previews, work files        [git-ignored]
 ```

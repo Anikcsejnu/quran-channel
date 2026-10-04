@@ -214,12 +214,29 @@ async function loadVerses(surah, enId, bnId) {
   return map;
 }
 
+// Bangla surah names (editable list of 114, in order)
+let surahNamesBn = null;
+function surahNameBn(surah) {
+  if (!surahNamesBn) {
+    try { surahNamesBn = JSON.parse(fs.readFileSync(path.join(ROOT, 'surah-names-bn.json'), 'utf8')); } catch { surahNamesBn = []; }
+  }
+  return surahNamesBn[surah - 1] || '';
+}
+
+// Where a video goes: output/Videos/<NNN - Name>/ or output/Shorts/<NNN - Name>/
+function surahFolder(data, isShort) {
+  const name = data.chapter.name_simple.replace(/[<>:"/\\|?*]/g, '');
+  return path.join(OUT, isShort ? 'Shorts' : 'Videos', `${pad3(data.surah)} - ${name}`);
+}
+
 async function loadSurah(surah, args) {
   const enId = TRANSLATIONS.en[args.en] || parseInt(args.en, 10);
   const bnId = TRANSLATIONS.bn[args.bn] || parseInt(args.bn, 10);
   const { chapter } = await getJson(`https://api.quran.com/api/v4/chapters/${surah}`, `chapter-${surah}.json`);
   const { chapter: chapterBn } = await getJson(`https://api.quran.com/api/v4/chapters/${surah}?language=bn`, `chapter-${surah}-bn.json`);
-  chapter.name_bn = chapterBn.translated_name.name;
+  // Quran.com only has the meaning in Bangla ("আন্তরিকতা"); the searchable name ("আল-ইখলাস") comes from surah-names-bn.json
+  chapter.meaning_bn = chapterBn.translated_name.name;
+  chapter.name_bn = surahNameBn(surah) || chapter.meaning_bn;
   const { chapter_info: info } = await getJson(`https://api.quran.com/api/v4/chapters/${surah}/info`, `chapter-info-${surah}.json`);
   chapter.info = info;
   const verses = await loadVerses(surah, enId, bnId);
@@ -704,7 +721,8 @@ async function renderVideo(job, ctx) {
   const shift = args.still ? `setpts=PTS+${stillAt.toFixed(2)}/TB,` : '';
   graph.push(`[${vLabel}]${shift}subtitles=subs.ass:fontsdir=fonts,format=yuv420p[v]`);
 
-  const outFile = path.resolve(job.out || path.join(OUT, `${tag}.mp4`));
+  const outFile = path.resolve(job.out || path.join(surahFolder(data, args.format === 'short'),
+    `${pad3(data.surah)}_${job.from}-${job.to}_${args.reciter}.mp4`));
   fs.mkdirSync(path.dirname(outFile), { recursive: true });
 
   if (args.still) {
@@ -746,6 +764,7 @@ function writeDescription(outFile, job, ctx) {
   const juzList = [...new Set([job.from, job.to].map(n => data.verses.get(n).juz))];
   const place = chapter.revelation_place === 'madinah' ? 'Madinah (Madani)' : 'Makkah (Makki)';
   const surahName = `${chapter.name_simple} (${chapter.translated_name.name})`;
+  const bnName = `সূরা ${chapter.name_bn}`;
 
   const credits = [];
   const creditsFile = path.join(ROOT, 'backgrounds', 'credits.json');
@@ -757,7 +776,7 @@ function writeDescription(outFile, job, ctx) {
   const intro = surahIntro(data, job);
   const desc = [
     ...(intro ? [intro, ''] : []),
-    `📖 Surah: ${surahName} · ${chapter.name_arabic}`,
+    `📖 Surah: ${surahName} · ${chapter.name_arabic} · ${bnName}`,
     '',
     `📍 Juz: ${juzList.join('–')} | Total Verses: ${chapter.verses_count}` + (whole ? '' : ` | This video: ${ref}`),
     '',
@@ -774,18 +793,35 @@ function writeDescription(outFile, job, ctx) {
     ...(credits.length ? ['', '🎬 Background footage:', ...credits] : []),
     '',
     [
-      '#Quran', `#Surah${chapter.name_simple.replace(/[^A-Za-z]/g, '')}`, '#QuranRecitation',
-      '#QuranWithBanglaTranslation', '#কুরআন', '#Islam', `#${reciter.name.split(' ').pop()}`,
+      '#Quran', `#Surah${chapter.name_simple.replace(/[^A-Za-z]/g, '')}`, `#${bnName.replace(/[\s-]+/g, '_')}`, '#QuranRecitation',
+      '#QuranWithBanglaTranslation', '#কুরআন', '#বাংলা_অনুবাদ', '#Islam', `#${reciter.name.split(' ').pop()}`,
       ...(args.format === 'short' ? ['#Shorts'] : []),
     ].join(' '),
   ].join('\n');
   fs.writeFileSync(outFile.replace(/\.mp4$/, '.description.txt'), desc, 'utf8');
 
-  // YouTube titles are limited to 100 characters
-  const title = args.format === 'short'
-    ? `Surah ${chapter.name_simple} ${ref} | ${chapter.translated_name.name} ✨ #Shorts`
-    : `Surah ${chapter.name_simple} ${whole ? '' : `(${ref}) `}| ${reciter.name} | Arabic, English & Bangla Translation`;
-  fs.writeFileSync(outFile.replace(/\.mp4$/, '.title.txt'), title.slice(0, 100), 'utf8');
+  fs.writeFileSync(outFile.replace(/\.mp4$/, '.title.txt'), buildTitle({ chapter, ref, whole, reciter, short: args.format === 'short' }), 'utf8');
+}
+
+// English + Bangla surah name so the video is found by searches in either language.
+// YouTube allows 100 characters: the first candidate that fits is used, dropping the least important parts.
+function buildTitle({ chapter, ref, whole, reciter, short }) {
+  const en = `Surah ${chapter.name_simple}`;
+  const bn = `সূরা ${chapter.name_bn}`;
+  const verses = whole ? '' : ` ${ref}`;
+  const candidates = short
+    ? [
+      `${en}${verses} | ${bn} | ${chapter.translated_name.name} ✨ #Shorts`,
+      `${en}${verses} | ${bn} ✨ #Shorts`,
+      `${en}${verses} | ${bn} #Shorts`,
+    ]
+    : [
+      `${en}${verses} | ${bn} | ${reciter.name} | Arabic, English & Bangla Translation`,
+      `${en}${verses} | ${bn} | ${reciter.name} | Bangla & English Translation`,
+      `${en}${verses} | ${bn} | ${reciter.name} | বাংলা অনুবাদ`,
+      `${en}${verses} | ${bn} | বাংলা অনুবাদ`,
+    ];
+  return candidates.find(t => [...t].length <= 100) || candidates[candidates.length - 1].slice(0, 100);
 }
 
 // ---------- Main ----------
@@ -837,8 +873,8 @@ async function main() {
       cur.to = n; dur += d;
       if (dur >= minSec || n === to) { jobs.push(cur); cur = null; }
     }
-    const dir = path.join(OUT, `${pad3(surah)}_${data.chapter.name_simple.replace(/[^A-Za-z-]/g, '')}_shorts`);
-    jobs.forEach(j => { j.out = path.join(dir, `${pad3(surah)}_${j.from === j.to ? j.from : `${j.from}-${j.to}`}.mp4`); });
+    const dir = surahFolder(data, true);
+    jobs.forEach(j => { j.out = path.join(dir, `${pad3(surah)}_${j.from === j.to ? j.from : `${j.from}-${j.to}`}_${args.reciter}.mp4`); });
     console.log(`• Batch: ${jobs.length} Shorts → ${dir}`);
   } else {
     jobs = [{ from, to, bismillah: needsBismillah && from === 1, out: args.out }];
@@ -858,5 +894,5 @@ if (require.main === module) {
 module.exports = {
   RECITERS, TRANSLATIONS, TRANSLATION_NAMES, DEFAULT_COLORS, DEFAULT_SIZES, SIZE_RANGE, FORMATS, DEFAULT_CHANNEL,
   FFMPEG, FFPROBE, MAX_REEL_CLIPS, DEFAULT_BACKGROUND, BG_LIMITS, verseFit,
-  FONT_METRICS, VERSE_GAPS, REFERENCE_SIZE, WATERMARK_SIZE, emRatio,
+  FONT_METRICS, VERSE_GAPS, REFERENCE_SIZE, WATERMARK_SIZE, emRatio, surahNameBn, buildTitle,
 };

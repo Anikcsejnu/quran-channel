@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node server.js",
     "video": "node make-video.js",
-    "backgrounds": "node fetch-backgrounds.js"
+    "backgrounds": "node fetch-backgrounds.js",
+    "organize": "node organize-output.js --apply"
   },
   "engines": {
     "node": ">=18"

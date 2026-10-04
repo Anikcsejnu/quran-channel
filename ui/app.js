@@ -187,17 +187,20 @@ function renderSurahButton() {
   if (!s) return;
   $('#surahNum').textContent = s.id;
   $('#surahName').textContent = s.name;
-  $('#surahMeta').textContent = `${s.meaning} · ${s.verses} verses · ${s.place === 'madinah' ? 'Madani' : 'Makki'}`;
+  $('#surahMeta').textContent = [s.bangla && `সূরা ${s.bangla}`, s.meaning, `${s.verses} verses`, s.place === 'madinah' ? 'Madani' : 'Makki']
+    .filter(Boolean).join(' · ');
   $('#surahArabic').textContent = s.arabic;
 }
 
 function renderSurahList(query = '') {
   const q = query.trim().toLowerCase();
-  const items = meta.surahs.filter(s => !q || String(s.id) === q || s.name.toLowerCase().includes(q) || s.meaning.toLowerCase().includes(q));
+  // Search English name, meaning, Bangla name or number
+  const items = meta.surahs.filter(s => !q || String(s.id) === q || s.name.toLowerCase().includes(q)
+    || s.meaning.toLowerCase().includes(q) || (s.bangla && s.bangla.includes(query.trim())));
   $('#surahList').innerHTML = items.map((s, i) => `
     <li role="option" data-id="${s.id}" class="${s.id === state.surah ? 'selected' : ''} ${i === 0 && q ? 'focus' : ''}">
       <span class="n">${s.id}</span>
-      <span class="t">${esc(s.name)}<small>${esc(s.meaning)} · ${s.verses} verses</small></span>
+      <span class="t">${esc(s.name)}<small>${s.bangla ? `${esc(s.bangla)} · ` : ''}${esc(s.meaning)} · ${s.verses} verses</small></span>
       <span class="a" dir="rtl">${esc(s.arabic)}</span>
     </li>`).join('') || '<li class="empty-li">No match</li>';
 }
@@ -1211,6 +1214,7 @@ function renderLibrary() {
         <div class="title">${esc(v.title || v.name)}</div>
         <div class="meta">
           <span class="tag ${v.format}">${v.format === 'short' ? 'Short' : 'Video'}</span>
+          ${v.folder ? `<span title="output/${esc(v.folder)}">${esc(v.folder.split(/[\\/]/).pop())}</span><span>·</span>` : ''}
           <span>${fmtSize(v.size)}</span><span>·</span><span>${fmtDate(v.modified)}</span>
         </div>
         <pre hidden>${esc(v.description)}</pre>

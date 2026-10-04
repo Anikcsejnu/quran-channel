@@ -9,6 +9,7 @@ const { spawn } = require('child_process');
 const {
   RECITERS, TRANSLATIONS, TRANSLATION_NAMES, DEFAULT_COLORS, DEFAULT_SIZES, SIZE_RANGE, DEFAULT_CHANNEL,
   FFMPEG, FFPROBE, MAX_REEL_CLIPS, DEFAULT_BACKGROUND, BG_LIMITS, FORMATS, FONT_METRICS, VERSE_GAPS, REFERENCE_SIZE, WATERMARK_SIZE, emRatio,
+  surahNameBn,
 } = require('./make-video.js');
 const { execFile } = require('child_process');
 
@@ -360,7 +361,7 @@ async function api(req, res, url) {
       sizeRange: SIZE_RANGE,
       channel: { ...DEFAULT_CHANNEL, ...readChannel() },
       surahs: chapters.chapters.map(c => ({
-        id: c.id, name: c.name_simple, arabic: c.name_arabic, meaning: c.translated_name.name,
+        id: c.id, name: c.name_simple, arabic: c.name_arabic, meaning: c.translated_name.name, bangla: surahNameBn(c.id),
         verses: c.verses_count, place: c.revelation_place,
       })),
       backgrounds: { landscape: count('landscape'), portrait: count('portrait') },
@@ -466,7 +467,8 @@ async function api(req, res, url) {
       return {
         id: rel.split(path.sep).join('/'), name: path.basename(file), folder: path.dirname(rel) === '.' ? '' : path.dirname(rel),
         url: mediaUrl(file), size: st.size, modified: st.mtimeMs,
-        format: /_short\.mp4$|_shorts[\\/]/i.test(file) ? 'short' : 'long',
+        // output/Shorts/… (current layout) or the older *_short.mp4 / *_shorts/ names
+        format: /^Shorts[\\/]|_short\.mp4$|_shorts[\\/]/i.test(rel) ? 'short' : 'long',
         title: read('.title.txt').trim(), description: read('.description.txt'),
       };
     }).sort((a, b) => b.modified - a.modified);
