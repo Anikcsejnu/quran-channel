@@ -374,7 +374,16 @@ node make-video.js --surah 1 --from 5 --still preview.png         # one frame, t
 | `--out <file>` | output path (single video only) | `output/…` |
 | `--no-highlight` `--no-intro` `--no-outro` `--no-watermark` `--no-bismillah` | turn features off | |
 
-\* Maher al-Muaiqly has no word timings, so highlighting is off for him. All other reciters support word-by-word highlighting.
+\* Maher al-Muaiqly has no word timings, so highlighting is off for him.
+
+**Lesser-known reciters** (no word highlighting; audio from EveryAyah, Hafs, 128–192 kbps):
+`neana` (Ahmed Neana), `alalaqimy` (Akram Al-Alaqimy), `suesy` (Ali Hajjaj Al-Suesy), `alili` (Aziz Alili),
+`salamah` (Yaser Salamah), `sahl-yassin` (Sahl Yassin), `abdulkareem` (Muhammad Abdul Kareem), `matroud` (Abdullah Matroud),
+`qahtani` (Khalid Abdullah Al-Qahtani), `tablawi` (Mohammad Al-Tablawi).
+
+They are lower profile than the famous imams and worth trying if your videos get copyright claims — but **no recording is
+guaranteed claim-free**. Upload a short test (e.g. Al-Ikhlas) as *Private* and look at YouTube Studio's **Checks** step before
+publishing, and get the reciter's or publisher's permission before monetising.
 
 **Background downloads**
 

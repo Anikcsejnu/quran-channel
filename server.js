@@ -388,7 +388,7 @@ async function api(req, res, url) {
     const count = sub => walk(path.join(BACKGROUNDS, sub), n => VIDEO_RE.test(n) || IMAGE_RE.test(n)).length;
     return send(res, 200, {
       ffmpeg: !!FFMPEG,
-      reciters: Object.entries(RECITERS).map(([id, r]) => ({ id, name: r.name, wordTimings: hasWordTimings(r) })),
+      reciters: Object.entries(RECITERS).map(([id, r]) => ({ id, name: r.name, wordTimings: hasWordTimings(r), group: r.group || 'main' })),
       translations: {
         en: Object.keys(TRANSLATIONS.en).map(id => ({ id, name: TRANSLATION_NAMES[id] })),
         bn: Object.keys(TRANSLATIONS.bn).map(id => ({ id, name: TRANSLATION_NAMES[id] })),

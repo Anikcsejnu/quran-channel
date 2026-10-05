@@ -30,6 +30,19 @@ const RECITERS = {
   dossary:               { name: 'Yasser ad-Dossary', cdn: 97, ea: 'Yasser_Ad-Dussary_128kbps' },
   tunaiji:               { name: 'Khalifah Al Tunaiji', cdn: 161 },
   maher:                 { name: 'Maher al-Muaiqly', ea: 'MaherAlMuaiqly128kbps' },
+
+  // Lesser-known reciters (EveryAyah, Hafs, ≥128 kbps). Lower profile than the famous imams, so worth testing
+  // with YouTube's copyright Checks — but no recording is guaranteed to be claim-free. No word timings.
+  neana:                 { name: 'Ahmed Neana', ea: 'Ahmed_Neana_128kbps', group: 'lesser' },
+  alalaqimy:             { name: 'Akram Al-Alaqimy', ea: 'Akram_AlAlaqimy_128kbps', group: 'lesser' },
+  suesy:                 { name: 'Ali Hajjaj Al-Suesy', ea: 'Ali_Hajjaj_AlSuesy_128kbps', group: 'lesser' },
+  alili:                 { name: 'Aziz Alili', ea: 'aziz_alili_128kbps', group: 'lesser' },
+  salamah:               { name: 'Yaser Salamah', ea: 'Yaser_Salamah_128kbps', group: 'lesser' },
+  'sahl-yassin':         { name: 'Sahl Yassin', ea: 'Sahl_Yassin_128kbps', group: 'lesser' },
+  abdulkareem:           { name: 'Muhammad Abdul Kareem', ea: 'Muhammad_AbdulKareem_128kbps', group: 'lesser' },
+  matroud:               { name: 'Abdullah Matroud', ea: 'Abdullah_Matroud_128kbps', group: 'lesser' },
+  qahtani:               { name: 'Khalid Abdullah Al-Qahtani', ea: 'Khaalid_Abdullaah_al-Qahtaanee_192kbps', group: 'lesser' },
+  tablawi:               { name: 'Mohammad Al-Tablawi', ea: 'Mohammad_al_Tablaway_128kbps', group: 'lesser' },
 };
 
 const hasWordTimings = r => !!(r.qdc || r.cdn);

@@ -285,9 +285,10 @@ function fillSelect(el, items, value) {
 function updateReciterNote() {
   const r = meta.reciters.find(x => x.id === state.reciter);
   const note = $('#reciterNote');
-  note.textContent = r && r.wordTimings
+  note.textContent = (r && r.wordTimings
     ? 'Word timings available — word-by-word highlighting supported.'
-    : 'No word timings for this reciter — highlighting will be off.';
+    : 'No word timings for this reciter — highlighting will be off.')
+    + (r && r.group === 'lesser' ? ' Lower profile, but not guaranteed claim-free: upload as Private first and check YouTube’s copyright Checks.' : '');
   $('#optHighlight').disabled = !(r && r.wordTimings);
 }
 
@@ -1523,7 +1524,15 @@ async function init() {
   initTranslationAudio();
   if (!surahOf(state.surah)) state.surah = 1;
 
-  fillSelect($('#reciter'), meta.reciters.map(r => ({ id: r.id, name: r.wordTimings ? r.name : `${r.name} (no highlighting)` })), state.reciter);
+  // Grouped: well-known reciters, then lesser-known ones worth testing for copyright claims
+  const reciterGroups = { main: 'Well-known reciters', lesser: 'Lesser-known reciters — test with YouTube Checks' };
+  $('#reciter').innerHTML = Object.entries(reciterGroups).map(([g, label]) => {
+    const opts = meta.reciters.filter(r => r.group === g)
+      .map(r => `<option value="${esc(r.id)}">${esc(r.wordTimings ? r.name : `${r.name} (no highlighting)`)}</option>`).join('');
+    return opts ? `<optgroup label="${esc(label)}">${opts}</optgroup>` : '';
+  }).join('');
+  if (!meta.reciters.some(r => r.id === state.reciter)) state.reciter = 'alafasy';
+  $('#reciter').value = state.reciter;
   fillSelect($('#enTr'), meta.translations.en, state.en);
   fillSelect($('#bnTr'), meta.translations.bn, state.bn);
   updateReciterNote();
