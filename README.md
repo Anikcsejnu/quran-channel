@@ -74,7 +74,13 @@ Work top to bottom on the left, check the result on the right, then render.
 | **1. Passage** | Surah (search by name, meaning or number), verse range, or a quick pick (Full surah, Ayat al-Kursi, End of Al-Baqarah, Al-Kahf 1–10, Al-Mulk). |
 | **2. Recitation & translation** | Reciter (it tells you whether word timings exist), English and Bangla translation. |
 | **3. Output** | **Single video** or **Short per verse**; format **Video 16:9** or **Short 9:16**; **Background** — see below. |
-| **4. Features** | Word-by-word highlight, intro card, outro card, watermark, Bismillah. |
+| **4. Features** | Word-by-word highlight, intro card, outro card, watermark, Bismillah, and **Bangla translation audio** (see below). |
+
+**Bangla translation audio** reads each ayah's Bangla translation aloud right after the recitation:
+*ayah → pause → Bangla translation → pause → next ayah*. While it plays, the Bangla line glows in the highlight colour.
+Choose a voice — **Azure** (Nabanita / Pradeep, Bangladeshi accent, recommended), **Google** (Indian Bengali), or
+**My recordings** (your own narration, one file per ayah) — set the speed and both pauses, and press **Test voice**
+to hear it. Azure and Google need a free API key, entered in the panel and stored only in your browser.
 
 **Background** has three modes:
 
@@ -188,6 +194,27 @@ flowchart TD
 7. **FFmpeg** — combines background (scaled, cropped, dimmed, vignette), logo overlays, the captions (rendered by libass, which shapes Arabic and Bangla correctly) and the audio into an MP4 (H.264 + AAC, `faststart` for YouTube).
 8. **Title and description** — written next to the video.
 
+### Bangla translation audio
+
+No source offers human Bangla narration split per ayah (EveryAyah, QuranicAudio and Quran.com have none), so the
+spoken translation comes from one of three places:
+
+| Voice | Source | Key |
+|---|---|---|
+| `azure:bn-BD-NabanitaNeural`, `azure:bn-BD-PradeepNeural` | Microsoft Azure neural speech (Bangladesh) | `AZURE_SPEECH_KEY` + `AZURE_SPEECH_REGION` — free tier 500k characters/month |
+| `google:bn-IN-Wavenet-A`, `google:bn-IN-Wavenet-B` | Google Cloud Text-to-Speech (India) | `GOOGLE_TTS_API_KEY` |
+| `files` | Your recordings: `translation-audio/bn/<NNN>/<NNNAAA>.mp3` (e.g. `112/112001.mp3`; Bismillah = `001/001001.mp3`) | none |
+
+How it fits into the [render pipeline](#render-pipeline):
+
+1. When the option is on, the recitation is cut **per ayah** (instead of one continuous cut).
+2. After each ayah (and the Bismillah), the timeline adds: a pause → the spoken Bangla translation (exactly the text shown on screen) → a pause.
+3. Synthesised speech is **cached** in `cache/tts/` by voice, speed and text, so re-rendering never calls the service — or bills you — twice.
+4. The captions get an extra phase per ayah: from the end of the recitation until the next ayah, the Bangla line is drawn in the highlight colour with a glow.
+5. The description adds a line naming the narration; synthetic voices are labelled **AI-generated voice**.
+
+Preview frames never generate speech. Keys sent from the Studio are only passed to the render process's environment — never saved or logged.
+
 ### Word-by-word highlighting
 
 Quran.com gives, for each verse, the time each word starts. Instead of one subtitle per verse, the renderer writes **one subtitle event per word**: the whole verse is drawn again with only that word in the highlight colour and glow. Because the text and layout are identical in every event, only the colour changes on screen.
@@ -296,6 +323,7 @@ Everything the Studio's **Save as default** buttons and the Branding page write.
 | `colors` | Caption colours (`#RRGGBB`). |
 | `fontScale` | Text size multipliers, 0.5–2 (1 = 100%). |
 | `background` | Default background settings (see [Backgrounds](#backgrounds)). |
+| `translationAudio` | `{ "enabled", "voice", "rate", "pauseAfterAyah", "pauseAfterTranslation" }` — defaults for [Bangla translation audio](#bangla-translation-audio). Keys are never stored here. |
 
 Precedence for every setting: **built-in default < `channel.json` < command-line flag** (the Studio sends flags for what you set on the page).
 
@@ -339,6 +367,9 @@ node make-video.js --surah 1 --from 5 --still preview.png         # one frame, t
 | `--gradient` / `--gradient-speed` | 2–4 colours `"#0A1A24,#14352B,#1D1530"` · 0 (still)–10 | Night emerald · 2 |
 | `--color-<name>` | `arabic`, `highlight`, `glow`, `english`, `bangla`, `reference` = `#RRGGBB` | see `channel.json` |
 | `--size-<name>` | `arabic`, `english`, `bangla` = 0.5–2 | 1 |
+| `--bn-audio` / `--no-bn-audio` | read the Bangla translation after each ayah | off |
+| `--bn-voice` | `azure:bn-BD-NabanitaNeural`, `azure:bn-BD-PradeepNeural`, `google:bn-IN-Wavenet-A`, `google:bn-IN-Wavenet-B`, `files` | Nabanita |
+| `--bn-rate` / `--bn-pause-ayah` / `--bn-pause-translation` | speed −40…40 % · seconds before · seconds after the translation (0–3) | 0 · 0.6 · 0.9 |
 | `--still <file.png>` | render one preview frame of the first verse instead of a video | |
 | `--out <file>` | output path (single video only) | `output/…` |
 | `--no-highlight` `--no-intro` `--no-outro` `--no-watermark` `--no-bismillah` | turn features off | |
@@ -370,6 +401,7 @@ quran-channel/
 ├── intros.json            Description introductions
 ├── surah-names-bn.json    Bangla surah names (114, in order) for titles, descriptions and the intro card
 ├── organize-output.js     Moves older renders into output/Videos and output/Shorts
+├── translation-audio/     Your own Bangla narration recordings (optional)                       [git-ignored]
 ├── assets/                Uploaded logo
 ├── backgrounds/           Your clips: landscape/ (videos), portrait/ (Shorts), credits.json   [git-ignored]
 ├── output/                Videos/<NNN - Name>/ and Shorts/<NNN - Name>/ with .title/.description [git-ignored]
@@ -411,6 +443,8 @@ All endpoints are local only (`127.0.0.1`).
 | **Pexels: "New API key issuance is paused"** | Use Pixabay instead, or download clips by hand and use **Upload your own**. |
 | **Text on a long verse doesn't get bigger** | It already fills the screen; the note under Text size shows how much it was reduced to fit. |
 | **No word highlighting** | The reciter has no word timings (Maher al-Muaiqly), or the feature is switched off. |
+| **"Azure speech error 401"** | Wrong key or region. The region is the one shown on your Speech resource (e.g. `southeastasia`). |
+| **"Missing recording: translation-audio/bn/…"** | With *My recordings*, every ayah in the range (and `001/001001.mp3` for the Bismillah) needs a file. |
 
 ---
 

@@ -246,6 +246,75 @@
                 <span><b>Watermark</b><small>Logo or handle in the corner</small></span></label>
               <label class="toggle"><input type="checkbox" id="optBismillah" checked><span class="switch"></span>
                 <span><b>Bismillah</b><small>Prepended when starting at verse 1</small></span></label>
+              <label class="toggle"><input type="checkbox" id="optBnAudio"><span class="switch"></span>
+                <span><b>Bangla translation audio</b><small>Each ayah is followed by its Bangla translation read aloud</small></span></label>
+            </div>
+
+            <!-- Bangla translation audio settings -->
+            <div class="bg-panel ta-panel" id="taPanel" hidden>
+              <div class="ta-flow" aria-hidden="true">
+                <span class="ta-step">Ayah</span><span class="ta-gap" id="taFlowGap1">0.6s</span>
+                <span class="ta-step bn">বাংলা অনুবাদ</span><span class="ta-gap" id="taFlowGap2">0.9s</span>
+                <span class="ta-step">Next ayah</span>
+              </div>
+
+              <label class="label" for="taVoice">Voice</label>
+              <select id="taVoice"></select>
+
+              <div id="taAzure">
+                <div class="row-2">
+                  <div>
+                    <label class="label" for="taAzureKey">Azure Speech key
+                      <a class="hint link" href="https://portal.azure.com/#create/Microsoft.CognitiveServicesSpeechServices" target="_blank" rel="noopener">Get a free key ↗</a></label>
+                    <input type="password" id="taAzureKey" placeholder="Paste your key" autocomplete="off">
+                  </div>
+                  <div>
+                    <label class="label" for="taAzureRegion">Region</label>
+                    <input id="taAzureRegion" placeholder="e.g. southeastasia" autocomplete="off" spellcheck="false">
+                  </div>
+                </div>
+                <p class="field-note">Free tier: 500,000 characters a month — roughly the whole Quran's Bangla translation. Keys are stored only in this browser.</p>
+              </div>
+
+              <div id="taGoogle">
+                <label class="label" for="taGoogleKey">Google Cloud API key
+                  <a class="hint link" href="https://console.cloud.google.com/apis/library/texttospeech.googleapis.com" target="_blank" rel="noopener">Enable the API ↗</a></label>
+                <input type="password" id="taGoogleKey" placeholder="Paste your key" autocomplete="off">
+                <p class="field-note">Indian Bengali voices. Keys are stored only in this browser.</p>
+              </div>
+
+              <div id="taFiles">
+                <p class="field-note">Put one recording per ayah in the project folder:
+                  <code>translation-audio/bn/112/112001.mp3</code>, <code>112002.mp3</code> … (surah and ayah as 3 digits).
+                  The Bismillah uses <code>001/001001.mp3</code>.</p>
+              </div>
+
+              <div class="row-2">
+                <div>
+                  <label class="label" for="taRate">Speed <span class="hint" id="taRateVal"></span></label>
+                  <input type="range" id="taRate" min="-40" max="40" step="5">
+                </div>
+                <div class="ta-test">
+                  <button class="btn sm" id="btnTestVoice" type="button">
+                    <svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9z"/><path d="M16 9a4 4 0 0 1 0 6"/></svg>Test voice
+                  </button>
+                  <audio id="taAudio" controls hidden></audio>
+                </div>
+              </div>
+              <div class="row-2">
+                <div>
+                  <label class="label" for="taPauseAyah">Pause after ayah <span class="hint" id="taPauseAyahVal"></span></label>
+                  <input type="range" id="taPauseAyah" min="0" max="3" step="0.1">
+                </div>
+                <div>
+                  <label class="label" for="taPauseTr">Pause after translation <span class="hint" id="taPauseTrVal"></span></label>
+                  <input type="range" id="taPauseTr" min="0" max="3" step="0.1">
+                </div>
+              </div>
+              <p class="field-note" id="taDisclosure">The description notes that the Bangla narration is an AI-generated voice.</p>
+              <div class="bg-actions">
+                <button class="btn ghost sm" id="btnSaveTa" type="button">Save as default</button>
+              </div>
             </div>
           </div>
         </div>

@@ -9,7 +9,7 @@ const { spawn } = require('child_process');
 const {
   RECITERS, TRANSLATIONS, TRANSLATION_NAMES, DEFAULT_COLORS, DEFAULT_SIZES, SIZE_RANGE, DEFAULT_CHANNEL,
   FFMPEG, FFPROBE, MAX_REEL_CLIPS, DEFAULT_BACKGROUND, BG_LIMITS, FORMATS, FONT_METRICS, VERSE_GAPS, REFERENCE_SIZE, WATERMARK_SIZE, emRatio,
-  surahNameBn, hasWordTimings,
+  surahNameBn, hasWordTimings, TRANSLATION_VOICES, DEFAULT_TRANSLATION_AUDIO, TA_LIMITS, translationClip,
 } = require('./make-video.js');
 const { execFile } = require('child_process');
 
@@ -23,7 +23,10 @@ const ASSETS = path.join(ROOT, 'assets');
 const BACKGROUNDS = path.join(ROOT, 'backgrounds');
 const CHANNEL_FILE = path.join(ROOT, 'channel.json');
 // Only these folders are served to the browser
-const MEDIA_ROOTS = { output: OUT, previews: PREVIEWS, assets: ASSETS, backgrounds: BACKGROUNDS };
+const MEDIA_ROOTS = {
+  output: OUT, previews: PREVIEWS, assets: ASSETS, backgrounds: BACKGROUNDS,
+  tts: path.join(ROOT, 'cache', 'tts'), recordings: path.join(ROOT, 'translation-audio'),
+};
 
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
@@ -285,6 +288,36 @@ function cleanBackgroundOptions(b) {
   return out;
 }
 
+// Validates translation-audio settings from the UI
+function cleanTranslationAudio(b) {
+  const bad = msg => Object.assign(new Error(msg), { status: 400 });
+  const out = { enabled: !!(b && b.enabled) };
+  if (!b) return out;
+  if (b.voice !== undefined) {
+    if (!TRANSLATION_VOICES[b.voice]) throw bad('Unknown translation voice');
+    out.voice = b.voice;
+  }
+  for (const [k, [min, max]] of Object.entries(TA_LIMITS)) {
+    if (b[k] === undefined) continue;
+    const n = parseFloat(b[k]);
+    if (!(n >= min && n <= max)) throw bad(`Translation audio ${k} must be between ${min} and ${max}`);
+    out[k] = Math.round(n * 100) / 100;
+  }
+  return out;
+}
+
+// Speech-service keys come from the browser with each request and are only passed to the child process
+// environment — never written to disk or logged
+function ttsEnv(keys) {
+  const k = keys || {};
+  const clean = v => String(v || '').trim().slice(0, 200);
+  const env = {};
+  if (k.azureKey) env.AZURE_SPEECH_KEY = clean(k.azureKey);
+  if (k.azureRegion) env.AZURE_SPEECH_REGION = clean(k.azureRegion).toLowerCase();
+  if (k.googleKey) env.GOOGLE_TTS_API_KEY = clean(k.googleKey);
+  return env;
+}
+
 function buildArgs(o) {
   const bad = msg => Object.assign(new Error(msg), { status: 400 });
   const a = ['--surah', intIn(o.surah, 1, 114, 'Surah')];
@@ -331,6 +364,17 @@ function buildArgs(o) {
   const flags = { source: '--bg-source', order: '--bg-order', max: '--bg-max', clipSeconds: '--clip-seconds', dim: '--bg-dim', gradientSpeed: '--gradient-speed' };
   for (const [k, f] of Object.entries(flags)) if (bo[k] !== undefined) a.push(f, String(bo[k]));
   if (bo.gradient) a.push('--gradient', bo.gradient.join(','));
+  if (o.translationAudio !== undefined) {
+    const ta = cleanTranslationAudio(o.translationAudio);
+    if (!ta.enabled) a.push('--no-bn-audio');
+    else {
+      a.push('--bn-audio');
+      if (ta.voice) a.push('--bn-voice', ta.voice);
+      if (ta.rate !== undefined) a.push('--bn-rate', String(ta.rate));
+      if (ta.pauseAfterAyah !== undefined) a.push('--bn-pause-ayah', String(ta.pauseAfterAyah));
+      if (ta.pauseAfterTranslation !== undefined) a.push('--bn-pause-translation', String(ta.pauseAfterTranslation));
+    }
+  }
   return a;
 }
 
@@ -352,6 +396,9 @@ async function api(req, res, url) {
       defaultColors: DEFAULT_COLORS,
       defaultSizes: DEFAULT_SIZES,
       defaultBackground: DEFAULT_BACKGROUND,
+      translationVoices: Object.entries(TRANSLATION_VOICES).map(([id, v]) => ({ id, label: v.label, provider: v.provider })),
+      defaultTranslationAudio: DEFAULT_TRANSLATION_AUDIO,
+      translationAudioLimits: TA_LIMITS,
       // Same layout numbers the renderer uses, so the live preview sizes text identically
       layout: {
         formats: FORMATS, fontMetrics: FONT_METRICS, emRatio: emRatio(),
@@ -399,6 +446,7 @@ async function api(req, res, url) {
       for (const k of Object.keys(DEFAULT_COLORS)) if (HEX_RE.test(body.colors[k] || '')) ch.colors[k] = body.colors[k].toUpperCase();
     }
     if (body.background) ch.background = { ...DEFAULT_BACKGROUND, ...cleanBackgroundOptions(body.background) };
+    if (body.translationAudio) ch.translationAudio = { ...DEFAULT_TRANSLATION_AUDIO, ...cleanTranslationAudio(body.translationAudio) };
     if (body.fontScale) {
       ch.fontScale = {};
       for (const k of Object.keys(DEFAULT_SIZES)) ch.fontScale[k] = parseFloat(validSize(body.fontScale[k] ?? DEFAULT_SIZES[k], k));
@@ -431,7 +479,7 @@ async function api(req, res, url) {
 
   if (route === 'POST /api/render') {
     const body = await readJson(req);
-    const j = startJob(body.batch ? 'batch' : 'video', 'make-video.js', buildArgs(body));
+    const j = startJob(body.batch ? 'batch' : 'video', 'make-video.js', buildArgs(body), ttsEnv(body.ttsKeys));
     return send(res, 200, { job: publicJob(j) });
   }
 
@@ -453,6 +501,16 @@ async function api(req, res, url) {
       const msg = (/✗\s*(.+)/.exec(out.log) || [])[1] || 'Preview failed';
       return fail(res, 500, msg);
     }
+    return send(res, 200, { url: mediaUrl(file) });
+  }
+
+  // Speaks a short sample so the voice, speed and keys can be checked before rendering
+  if (route === 'POST /api/tts-test') {
+    const body = await readJson(req);
+    const ta = { ...DEFAULT_TRANSLATION_AUDIO, ...cleanTranslationAudio({ ...body, enabled: true }) };
+    const text = String(body.text || 'পরম করুণাময় অসীম দয়ালু আল্লাহর নামে').slice(0, 600);
+    const file = await translationClip(text, 1, 1, ta, ttsEnv(body.ttsKeys))
+      .catch(e => { throw Object.assign(new Error(e.message), { status: 400 }); });
     return send(res, 200, { url: mediaUrl(file) });
   }
 

@@ -83,7 +83,7 @@ const SIZE_RANGE = [0.5, 2];
 const VIDEO_RE = /\.(mp4|mov|webm|mkv)$/i;
 const IMAGE_RE = /\.(jpe?g|png|webp|bmp)$/i;
 
-const BOOL_FLAGS = new Set(['no-bismillah', 'no-highlight', 'no-intro', 'no-outro', 'no-watermark', 'batch']);
+const BOOL_FLAGS = new Set(['no-bismillah', 'no-highlight', 'no-intro', 'no-outro', 'no-watermark', 'batch', 'bn-audio', 'no-bn-audio']);
 
 function parseArgs() {
   const a = { reciter: 'alafasy', en: 'saheeh', bn: 'taisirul', format: 'long', bismillah: true, highlight: true };
@@ -122,6 +122,12 @@ function parseArgs() {
   --no-bismillah          don't prepend Bismillah audio
   --color-<name> <#hex>   ${Object.keys(DEFAULT_COLORS).join(', ')} (e.g. --color-highlight #00FFAA)
   --size-<name> <n>       text size for ${Object.keys(DEFAULT_SIZES).join(', ')}: ${SIZE_RANGE[0]}–${SIZE_RANGE[1]} (1 = 100%, e.g. --size-arabic 1.3)
+  --bn-audio              read the Bangla translation aloud after each ayah (--no-bn-audio turns it off)
+  --bn-voice <id>         azure:bn-BD-NabanitaNeural, azure:bn-BD-PradeepNeural, google:bn-IN-Wavenet-A,
+                          google:bn-IN-Wavenet-B, or files (your recordings in translation-audio/bn/)
+  --bn-rate <n>           speaking speed in % (−40 to 40)
+  --bn-pause-ayah <s> / --bn-pause-translation <s>   silence before / after each translation (0–3 s)
+                          Keys: AZURE_SPEECH_KEY + AZURE_SPEECH_REGION, or GOOGLE_TTS_API_KEY
   --still <file.png>      render one preview frame of the first verse instead of a video
   --out <file>            output mp4 path (single video only)
 
@@ -295,35 +301,155 @@ const pad3 = n => String(n).padStart(3, '0');
 const eaFile = (rec, surah, num) => download(`https://everyayah.com/data/${rec.dir}/${pad3(surah)}${pad3(num)}.mp3`,
   path.join(CACHE, 'audio', rec.dir, `${pad3(surah)}${pad3(num)}.mp3`));
 
+// ---------- Bangla translation audio ----------
+
+// Voices for reading the Bangla translation after each ayah. "files" plays your own recordings instead.
+const TRANSLATION_VOICES = {
+  'azure:bn-BD-NabanitaNeural': { provider: 'azure', voice: 'bn-BD-NabanitaNeural', lang: 'bn-BD', label: 'Nabanita — female, Bangladesh (Azure)' },
+  'azure:bn-BD-PradeepNeural': { provider: 'azure', voice: 'bn-BD-PradeepNeural', lang: 'bn-BD', label: 'Pradeep — male, Bangladesh (Azure)' },
+  'google:bn-IN-Wavenet-A': { provider: 'google', voice: 'bn-IN-Wavenet-A', lang: 'bn-IN', label: 'Wavenet A — female, India (Google)' },
+  'google:bn-IN-Wavenet-B': { provider: 'google', voice: 'bn-IN-Wavenet-B', lang: 'bn-IN', label: 'Wavenet B — male, India (Google)' },
+  files: { provider: 'files', label: 'My recordings (translation-audio/bn)' },
+};
+const DEFAULT_TRANSLATION_AUDIO = {
+  enabled: false,
+  voice: 'azure:bn-BD-NabanitaNeural',
+  rate: 0,                     // speaking speed in % (−40 slower … +40 faster)
+  pauseAfterAyah: 0.6,         // seconds of silence between the ayah and its translation
+  pauseAfterTranslation: 0.9,  // seconds of silence before the next ayah
+};
+const TA_LIMITS = { rate: [-40, 40], pauseAfterAyah: [0, 3], pauseAfterTranslation: [0, 3] };
+const TRANSLATION_AUDIO_DIR = path.join(ROOT, 'translation-audio', 'bn');
+
+// Defaults < channel.json "translationAudio" < command-line flags
+function resolveTranslationAudio(channel, args) {
+  const o = { ...DEFAULT_TRANSLATION_AUDIO, ...(channel.translationAudio || {}) };
+  if (args['bn-audio']) o.enabled = true;
+  if (args['no-bn-audio']) o.enabled = false;
+  if (args['bn-voice']) o.voice = args['bn-voice'];
+  const flag = { rate: 'bn-rate', pauseAfterAyah: 'bn-pause-ayah', pauseAfterTranslation: 'bn-pause-translation' };
+  for (const [k, f] of Object.entries(flag)) if (args[f] !== undefined) o[k] = args[f];
+  if (!TRANSLATION_VOICES[o.voice]) throw new Error(`Unknown --bn-voice "${o.voice}". Options: ${Object.keys(TRANSLATION_VOICES).join(', ')}`);
+  for (const [k, [min, max]] of Object.entries(TA_LIMITS)) {
+    o[k] = parseFloat(o[k]);
+    if (!(o[k] >= min && o[k] <= max)) throw new Error(`Translation audio ${k} must be between ${min} and ${max}`);
+  }
+  return o;
+}
+
+const xmlEsc = s => String(s).replace(/[<>&'"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;' }[c]));
+
+// Returns a local audio file with the spoken translation of one ayah. Synthesised speech is cached by
+// voice, speed and text, so the same verse is never generated (or billed) twice.
+async function translationClip(text, surah, ayah, opts, creds = process.env) {
+  const v = TRANSLATION_VOICES[opts.voice];
+  if (v.provider === 'files') {
+    const base = path.join(TRANSLATION_AUDIO_DIR, pad3(surah), `${pad3(surah)}${pad3(ayah)}`);
+    for (const ext of ['.mp3', '.wav', '.m4a', '.ogg']) if (fs.existsSync(base + ext)) return base + ext;
+    throw new Error(`Missing recording: translation-audio/bn/${pad3(surah)}/${pad3(surah)}${pad3(ayah)}.mp3`);
+  }
+  if (!String(text).trim()) throw new Error(`No Bangla translation text for ${surah}:${ayah}`);
+  const hash = require('crypto').createHash('sha1').update(`${opts.voice}|${opts.rate}|${text}`).digest('hex');
+  const out = path.join(CACHE, 'tts', opts.voice.replace(/[^\w-]/g, '-'), `${hash}.mp3`);
+  if (fs.existsSync(out) && fs.statSync(out).size > 0) return out;
+
+  let audio;
+  if (v.provider === 'azure') {
+    const key = creds.AZURE_SPEECH_KEY, region = String(creds.AZURE_SPEECH_REGION || '').trim().toLowerCase();
+    if (!key || !region) throw new Error('The Azure voice needs AZURE_SPEECH_KEY and AZURE_SPEECH_REGION (free tier: Azure portal → Speech service)');
+    if (!/^[a-z0-9]+$/.test(region)) throw new Error(`Invalid Azure region "${region}" (e.g. eastus, southeastasia)`);
+    const ssml = `<speak version="1.0" xml:lang="${v.lang}"><voice name="${v.voice}">`
+      + `<prosody rate="${opts.rate >= 0 ? '+' : ''}${opts.rate}%">${xmlEsc(text)}</prosody></voice></speak>`;
+    const res = await fetch(`https://${region}.tts.speech.microsoft.com/cognitiveservices/v1`, {
+      method: 'POST',
+      headers: {
+        'Ocp-Apim-Subscription-Key': key, 'Content-Type': 'application/ssml+xml',
+        'X-Microsoft-OutputFormat': 'audio-24khz-96kbitrate-mono-mp3', 'User-Agent': 'quran-video-studio',
+      },
+      body: ssml,
+    });
+    if (!res.ok) throw new Error(`Azure speech error ${res.status}${res.status === 401 ? ' — check the key and region' : ''}`);
+    audio = Buffer.from(await res.arrayBuffer());
+  } else {
+    const key = creds.GOOGLE_TTS_API_KEY;
+    if (!key) throw new Error('The Google voice needs GOOGLE_TTS_API_KEY (Google Cloud → Text-to-Speech API)');
+    const res = await fetch(`https://texttospeech.googleapis.com/v1/text:synthesize?key=${encodeURIComponent(key)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        input: { text }, voice: { languageCode: v.lang, name: v.voice },
+        audioConfig: { audioEncoding: 'MP3', speakingRate: 1 + opts.rate / 100 },
+      }),
+    });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(`Google speech error ${res.status}${j.error && j.error.message ? ` — ${j.error.message}` : ''}`);
+    audio = Buffer.from(j.audioContent, 'base64');
+  }
+  if (!audio.length) throw new Error('The speech service returned no audio');
+  fs.mkdirSync(path.dirname(out), { recursive: true });
+  fs.writeFileSync(out, audio);
+  return out;
+}
+
 // Builds the audio parts list + caption cues for one video. Times start at `offset` (after the intro).
-async function buildTimeline(job, data, rec, bismillahRec, work, offset) {
+// With translation audio, each ayah is followed by a pause, its spoken Bangla translation and another pause.
+async function buildTimeline(job, data, rec, bismillahRec, work, offset, ta) {
   const parts = [];
   const cues = [];
+  const withTranslation = !!(ta && ta.enabled);
   let t = offset;
+  // Everything becomes 44.1 kHz stereo WAV so the parts can be joined without re-timing
   const wav = (src, from, to, name) => {
     const out = path.join(work, name);
     ffmpeg(['-ss', from.toFixed(3), '-to', to.toFixed(3), '-i', src, '-ar', '44100', '-ac', '2', out]);
     parts.push(out);
     return to - from;
   };
+  const toWav = (src, name) => {
+    const out = path.join(work, name);
+    ffmpeg(['-i', src, '-ar', '44100', '-ac', '2', out]);
+    parts.push(out);
+    return probeDuration(out);
+  };
+  const silence = (sec, name) => {
+    if (sec <= 0) return 0;
+    const out = path.join(work, name);
+    ffmpeg(['-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=stereo', '-t', sec.toFixed(3), out]);
+    parts.push(out);
+    return sec;
+  };
+  const addTranslation = async (cue, surah, ayah, id) => {
+    if (!withTranslation) return;
+    cue.ayahEnd = cue.end;
+    t += silence(ta.pauseAfterAyah, `pause-${id}-a.wav`);
+    const clip = await translationClip(cue.bn, surah, ayah, ta);
+    cue.translationStart = t;
+    t += toWav(clip, `bn-${id}.wav`);
+    t += silence(ta.pauseAfterTranslation, `pause-${id}-b.wav`);
+    cue.end = t;
+  };
 
   if (job.bismillah) {
     const v = data.bismillahVerse;
+    let cue;
     if (bismillahRec.mode === 'qdc') {
       const bt = bismillahRec.timings.get(1);
       const d = wav(bismillahRec.mp3, bt.from, bt.to, 'bismillah.wav');
-      cues.push({ ...v, num: 0, label: '', start: t, end: t + d, segs: bt.segs.map(s => ({ i: s.i, t: t + s.t - bt.from })) });
+      cue = { ...v, num: 0, label: '', start: t, end: t + d, segs: bt.segs.map(s => ({ i: s.i, t: t + s.t - bt.from })) };
       t += d;
     } else {
       const f = await eaFile(bismillahRec, 1, 1);
-      const d = probeDuration(f);
-      parts.push(f);
-      cues.push({ ...v, num: 0, label: '', start: t, end: t + d, segs: [] });
+      const d = withTranslation ? toWav(f, 'bismillah.wav') : (parts.push(f), probeDuration(f));
+      cue = { ...v, num: 0, label: '', start: t, end: t + d, segs: [] };
       t += d;
     }
+    cues.push(cue);
+    await addTranslation(cue, 1, 1, 'bismillah');
   }
 
-  if (rec.mode === 'qdc') {
+  const label = n => `${data.chapter.name_simple} ${data.surah}:${n}`;
+  if (rec.mode === 'qdc' && !withTranslation) {
+    // Recitation only: one continuous cut keeps the reciter's natural flow between ayat
     const T0 = rec.timings.get(job.from).from;
     const T1 = rec.timings.get(job.to).to;
     wav(rec.mp3, T0, T1, 'verses.wav');
@@ -331,17 +457,30 @@ async function buildTimeline(job, data, rec, bismillahRec, work, offset) {
     for (let n = job.from; n <= job.to; n++) {
       const vt = rec.timings.get(n);
       const start = base + vt.from - T0, end = base + vt.to - T0;
-      cues.push({ ...data.verses.get(n), start, end, label: `${data.chapter.name_simple} ${data.surah}:${n}`,
+      cues.push({ ...data.verses.get(n), start, end, label: label(n),
         segs: vt.segs.map(s => ({ i: s.i, t: Math.max(start, base + s.t - T0) })) });
     }
     t = base + T1 - T0;
+  } else if (rec.mode === 'qdc') {
+    // Each ayah cut separately so its translation can follow it
+    for (let n = job.from; n <= job.to; n++) {
+      const vt = rec.timings.get(n);
+      const start = t;
+      const d = wav(rec.mp3, vt.from, vt.to, `ayah-${n}.wav`);
+      const cue = { ...data.verses.get(n), start, end: start + d, label: label(n),
+        segs: vt.segs.map(s => ({ i: s.i, t: Math.max(start, start + s.t - vt.from) })) };
+      t += d;
+      cues.push(cue);
+      await addTranslation(cue, data.surah, n, n);
+    }
   } else {
     for (let n = job.from; n <= job.to; n++) {
       const f = await eaFile(rec, data.surah, n);
-      const d = probeDuration(f);
-      parts.push(f);
-      cues.push({ ...data.verses.get(n), start: t, end: t + d, label: `${data.chapter.name_simple} ${data.surah}:${n}`, segs: [] });
+      const d = withTranslation ? toWav(f, `ayah-${n}.wav`) : (parts.push(f), probeDuration(f));
+      const cue = { ...data.verses.get(n), start: t, end: t + d, label: label(n), segs: [] };
       t += d;
+      cues.push(cue);
+      await addTranslation(cue, data.surah, n, n);
     }
   }
   return { parts, cues, audioEnd: t };
@@ -458,25 +597,33 @@ function verseEvents(c, fmt, highlight, col, size) {
   const gap = n => `\\N{\\fs${Math.round(n * k)}}\\h\\N`;
   const g = VERSE_GAPS;
   const marker = c.num ? ` \uFD3F${c.num.toLocaleString('ar-EG')}\uFD3E` : '';
-  const body = active =>
+  // While the Bangla translation is being read aloud, the Bangla line glows like the recited word does
+  const BN_BASE = `\\c${col.bangla}\\bord2`;
+  const BN_SPOKEN = `\\c${col.highlight}\\3c${col.glow}\\bord3\\blur3`;
+  const body = (active, bnSpoken) =>
     `{\\fnAmiri Quran\\fs${fs(fmt.ar * size.arabic, 'arabic')}${AR_BASE}}` +
     rtl(c.words.map((w, i) => (i === active ? `{${AR_HIGHLIGHT}}${esc(w)}{${AR_BASE}}` : esc(w))).join(' ') + marker) +
     `${gap(g.afterArabic)}{\\fnPoppins\\fs${fs(fmt.en * size.english, 'latin')}\\c${col.english}\\bord2}${esc(c.en)}` +
-    `${gap(g.afterEnglish)}{\\fnHind Siliguri\\fs${fs(fmt.bn * size.bangla, 'bangla')}\\c${col.bangla}\\bord2}${esc(c.bn)}` +
-    (c.label ? `${gap(g.beforeReference)}{\\fnPoppins\\fs${fs(REFERENCE_SIZE, 'latin')}\\c${col.reference}\\bord1}${esc(c.label)}` : '');
+    `${gap(g.afterEnglish)}{\\fnHind Siliguri\\fs${fs(fmt.bn * size.bangla, 'bangla')}${bnSpoken ? BN_SPOKEN : BN_BASE}}${esc(c.bn)}` +
+    (c.label ? `${gap(g.beforeReference)}{\\fnPoppins\\fs${fs(REFERENCE_SIZE, 'latin')}\\c${col.reference}\\3c&H00000000&\\bord1\\blur0}${esc(c.label)}` : '');
 
-  if (!highlight || !c.segs.length) return [{ start: c.start, end: c.end, text: `{\\fad(250,250)}${body(-1)}` }];
-
-  // One event per word: the whole verse is redrawn with the word being recited highlighted
-  const marks = [{ t: c.start, i: -1 }, ...c.segs.filter(s => s.i < c.words.length && s.t < c.end)];
+  // Recitation phase ends at ayahEnd when a spoken translation follows
+  const ayahEnd = c.ayahEnd ?? c.end;
   const events = [];
-  marks.forEach((m, j) => {
-    const end = j + 1 < marks.length ? marks[j + 1].t : c.end;
-    if (end - m.t >= 0.01) events.push({ start: m.t, end, active: m.i });
-  });
+  if (!highlight || !c.segs.length) {
+    events.push({ start: c.start, end: ayahEnd, active: -1 });
+  } else {
+    // One event per word: the whole verse is redrawn with the word being recited highlighted
+    const marks = [{ t: c.start, i: -1 }, ...c.segs.filter(s => s.i < c.words.length && s.t < ayahEnd)];
+    marks.forEach((m, j) => {
+      const end = j + 1 < marks.length ? marks[j + 1].t : ayahEnd;
+      if (end - m.t >= 0.01) events.push({ start: m.t, end, active: m.i });
+    });
+  }
+  if (c.translationStart !== undefined) events.push({ start: ayahEnd, end: c.end, active: -1, bnSpoken: true });
   return events.map((e, j) => ({
     start: e.start, end: e.end,
-    text: `{\\fad(${j === 0 ? 250 : 0},${j === events.length - 1 ? 250 : 0})}${body(e.active)}`,
+    text: `{\\fad(${j === 0 ? 250 : 0},${j === events.length - 1 ? 250 : 0})}${body(e.active, e.bnSpoken)}`,
   }));
 }
 
@@ -685,7 +832,9 @@ async function renderVideo(job, ctx) {
   const work = path.join(CACHE, 'work', tag);
   fs.mkdirSync(work, { recursive: true });
 
-  const { parts, cues, audioEnd } = await buildTimeline(job, data, rec, bismillahRec, work, intro);
+  // Preview stills never need the spoken translation (and shouldn't spend speech credits)
+  const ta = args.still ? null : ctx.translationAudio;
+  const { parts, cues, audioEnd } = await buildTimeline(job, data, rec, bismillahRec, work, intro, ta);
   const total = audioEnd + outro;
   const highlight = args.highlight && rec.mode === 'qdc';
 
@@ -804,6 +953,7 @@ function writeDescription(outFile, job, ctx) {
     `🎙️ Reciter: ${reciter.name}`,
     '',
     `🌐 Translations: English — ${TRANSLATION_NAMES[args.en] || args.en} · Bangla — ${TRANSLATION_NAMES[args.bn] || args.bn}`,
+    ...(ctx.translationAudio.enabled ? ['', translationAudioCredit(ctx.translationAudio)] : []),
     '',
     channel.subscribeLine || 'Subscribe for daily peaceful Quranic verses with verified English and Bengali translations.',
     ...(channel.handle ? [`👉 ${channel.handle}`] : []),
@@ -820,6 +970,14 @@ function writeDescription(outFile, job, ctx) {
   fs.writeFileSync(outFile.replace(/\.mp4$/, '.description.txt'), desc, 'utf8');
 
   fs.writeFileSync(outFile.replace(/\.mp4$/, '.title.txt'), buildTitle({ chapter, ref, whole, reciter, short: args.format === 'short' }), 'utf8');
+}
+
+// Description line naming the translation narrator; synthetic voices are disclosed as such
+function translationAudioCredit(ta) {
+  const v = TRANSLATION_VOICES[ta.voice];
+  return v.provider === 'files'
+    ? '🔊 Bangla translation audio: recorded narration'
+    : `🔊 Bangla translation audio: AI-generated voice (${v.label.replace(/ \((Azure|Google)\)$/, '')}, ${v.provider === 'azure' ? 'Microsoft Azure' : 'Google Cloud'})`;
 }
 
 // English + Bangla surah name so the video is found by searches in either language.
@@ -874,7 +1032,12 @@ async function main() {
   const background = resolveBackground(args.bg, fmt, surah, bgOptions);
   console.log(`• Background: ${background.type === 'gradient' ? 'animated gradient'
     : background.used && background.used.length > 1 ? `${background.used.length} clips` : path.basename(background.file)}`);
-  const ctx = { data, args, fmt, reciter, rec, bismillahRec, channel, background, bgOptions, colors: resolveColors(channel, args), sizes: resolveSizes(channel, args) };
+  const translationAudio = resolveTranslationAudio(channel, args);
+  if (translationAudio.enabled) console.log(`• Bangla translation audio: ${TRANSLATION_VOICES[translationAudio.voice].label}`);
+  const ctx = {
+    data, args, fmt, reciter, rec, bismillahRec, channel, background, bgOptions, translationAudio,
+    colors: resolveColors(channel, args), sizes: resolveSizes(channel, args),
+  };
 
   const needsBismillah = args.bismillah && data.chapter.bismillah_pre;
   let jobs;
@@ -914,4 +1077,5 @@ module.exports = {
   RECITERS, TRANSLATIONS, TRANSLATION_NAMES, DEFAULT_COLORS, DEFAULT_SIZES, SIZE_RANGE, FORMATS, DEFAULT_CHANNEL,
   FFMPEG, FFPROBE, MAX_REEL_CLIPS, DEFAULT_BACKGROUND, BG_LIMITS, verseFit,
   FONT_METRICS, VERSE_GAPS, REFERENCE_SIZE, WATERMARK_SIZE, emRatio, surahNameBn, buildTitle, hasWordTimings,
+  TRANSLATION_VOICES, DEFAULT_TRANSLATION_AUDIO, TA_LIMITS, translationClip,
 };

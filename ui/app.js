@@ -117,6 +117,7 @@ const state = Object.assign({
   surah: 1, from: 1, to: 7,
   reciter: 'alafasy', en: 'saheeh', bn: 'taisirul',
   mode: 'single', format: 'long', groupSeconds: 0, bgMode: 'auto', bgSelection: [], bgOptions: null,
+  translationAudio: null,
   highlight: true, intro: true, outro: true, watermark: true, bismillah: true,
   colors: null, sizes: null, preview: 'live',
 }, store.get('qvs-state', {}));
@@ -136,6 +137,9 @@ function payload() {
     bg: state.bgMode === 'custom' ? state.bgSelection : state.bgMode,
     bgOptions: state.bgOptions,
     colors: state.colors, sizes: state.sizes,
+    translationAudio: state.translationAudio,
+    // Speech keys are only sent when the Bangla audio is on
+    ttsKeys: state.translationAudio && state.translationAudio.enabled ? ttsKeys() : undefined,
   };
 }
 
@@ -819,6 +823,89 @@ for (const [id, key] of Object.entries(TOGGLES)) {
   });
 }
 
+// ---------- Bangla translation audio ----------
+
+const TTS_KEYS = 'qvs-tts-keys';
+const ttsKeys = () => store.get(TTS_KEYS, {});
+const taProvider = () => (meta.translationVoices.find(v => v.id === state.translationAudio.voice) || {}).provider;
+
+function initTranslationAudio() {
+  // Voices grouped by provider
+  const groups = { azure: 'Microsoft Azure — Bangladesh', google: 'Google Cloud — India', files: 'Your own recordings' };
+  $('#taVoice').innerHTML = Object.entries(groups).map(([p, name]) => {
+    const opts = meta.translationVoices.filter(v => v.provider === p)
+      .map(v => `<option value="${esc(v.id)}">${esc(v.label.replace(/ \((Azure|Google)\)$/, ''))}</option>`).join('');
+    return opts ? `<optgroup label="${esc(name)}">${opts}</optgroup>` : '';
+  }).join('');
+  const k = ttsKeys();
+  $('#taAzureKey').value = k.azureKey || '';
+  $('#taAzureRegion').value = k.azureRegion || '';
+  $('#taGoogleKey').value = k.googleKey || '';
+  renderTranslationAudio();
+}
+
+function renderTranslationAudio() {
+  const ta = state.translationAudio;
+  $('#optBnAudio').checked = ta.enabled;
+  $('#taPanel').hidden = !ta.enabled;
+  $('#taVoice').value = ta.voice;
+  const p = taProvider();
+  $('#taAzure').hidden = p !== 'azure';
+  $('#taGoogle').hidden = p !== 'google';
+  $('#taFiles').hidden = p !== 'files';
+  $('#taDisclosure').hidden = p === 'files';
+  $('#taRate').value = ta.rate;
+  $('#taRateVal').textContent = ta.rate === 0 ? 'normal' : `${ta.rate > 0 ? '+' : ''}${ta.rate}%`;
+  $('#taPauseAyah').value = ta.pauseAfterAyah;
+  $('#taPauseTr').value = ta.pauseAfterTranslation;
+  $('#taPauseAyahVal').textContent = $('#taFlowGap1').textContent = `${ta.pauseAfterAyah.toFixed(1)}s`;
+  $('#taPauseTrVal').textContent = $('#taFlowGap2').textContent = `${ta.pauseAfterTranslation.toFixed(1)}s`;
+}
+
+function setTa(key, value) {
+  state.translationAudio[key] = value;
+  saveState();
+  renderTranslationAudio();
+  updateSummary();
+}
+
+$('#optBnAudio').addEventListener('change', e => setTa('enabled', e.target.checked));
+$('#taVoice').addEventListener('change', e => { setTa('voice', e.target.value); $('#taAudio').hidden = true; });
+$('#taRate').addEventListener('input', e => setTa('rate', +e.target.value));
+$('#taPauseAyah').addEventListener('input', e => setTa('pauseAfterAyah', +e.target.value));
+$('#taPauseTr').addEventListener('input', e => setTa('pauseAfterTranslation', +e.target.value));
+for (const [id, key] of [['taAzureKey', 'azureKey'], ['taAzureRegion', 'azureRegion'], ['taGoogleKey', 'googleKey']]) {
+  $(`#${id}`).addEventListener('change', e => store.set(TTS_KEYS, { ...ttsKeys(), [key]: e.target.value.trim() }));
+}
+
+$('#btnTestVoice').addEventListener('click', async () => {
+  const btn = $('#btnTestVoice');
+  btn.disabled = true;
+  try {
+    // Speak the Bangla translation of the verse shown in the preview, if loaded
+    const { url } = await api('/api/tts-test', {
+      method: 'POST',
+      json: { ...state.translationAudio, text: verse && verse.bn, ttsKeys: ttsKeys() },
+    });
+    const audio = $('#taAudio');
+    audio.hidden = false;
+    audio.src = `${url}?t=${Date.now()}`;
+    audio.play().catch(() => {});
+  } catch (e) {
+    toast(e.message, 'error');
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+$('#btnSaveTa').addEventListener('click', async () => {
+  try {
+    const { channel } = await api('/api/channel', { method: 'PUT', json: { translationAudio: state.translationAudio } });
+    meta.channel = channel;
+    toast('Bangla audio settings saved as default');
+  } catch (e) { toast(e.message, 'error'); }
+});
+
 function updateSummary() {
   if (!meta) return;
   const s = surahOf(state.surah);
@@ -830,7 +917,8 @@ function updateSummary() {
   const what = state.mode === 'batch'
     ? (state.groupSeconds ? `Up to ${count} Shorts (≥ ${state.groupSeconds}s each)` : `${count} Short${count > 1 ? 's' : ''}, one per verse`)
     : effectiveFormat() === 'short' ? 'Short · 9:16' : 'Video · 16:9';
-  $('#renderSub').textContent = `${what} · ${r ? r.name : ''}`;
+  const bnAudio = state.translationAudio && state.translationAudio.enabled ? ' · + Bangla audio' : '';
+  $('#renderSub').textContent = `${what} · ${r ? r.name : ''}${bnAudio}`;
 }
 
 // ---------- Colours ----------
@@ -1431,6 +1519,8 @@ async function init() {
   state.colors = { ...meta.defaultColors, ...(meta.channel.colors || {}), ...(state.colors || {}) };
   state.sizes = { ...meta.defaultSizes, ...(meta.channel.fontScale || {}), ...(state.sizes || {}) };
   state.bgOptions = { ...meta.defaultBackground, ...(meta.channel.background || {}), ...(state.bgOptions || {}) };
+  state.translationAudio = { ...meta.defaultTranslationAudio, ...(meta.channel.translationAudio || {}), ...(state.translationAudio || {}) };
+  initTranslationAudio();
   if (!surahOf(state.surah)) state.surah = 1;
 
   fillSelect($('#reciter'), meta.reciters.map(r => ({ id: r.id, name: r.wordTimings ? r.name : `${r.name} (no highlighting)` })), state.reciter);
