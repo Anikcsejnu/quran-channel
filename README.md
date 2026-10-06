@@ -9,6 +9,7 @@ Make YouTube videos and Shorts of Quran recitation with synced captions — from
 - **Batch Shorts**: one Short per verse of a surah
 - **Caption style**: colours for every text element and adjustable text sizes, with a live preview that matches the render
 - **YouTube-ready title and description** for every video
+- **Upload to YouTube** from the Studio: one video or a whole batch of Shorts, with playlists and scheduled publishing
 
 ---
 
@@ -16,6 +17,7 @@ Make YouTube videos and Shorts of Quran recitation with synced captions — from
 
 1. [Quick start](#quick-start)
 2. [Using the Studio](#using-the-studio)
+   - [Uploading to YouTube](#uploading-to-youtube)
 3. [How it works](#how-it-works)
    - [Architecture](#architecture)
    - [Render pipeline](#render-pipeline)
@@ -26,6 +28,7 @@ Make YouTube videos and Shorts of Quran recitation with synced captions — from
    - [Preview frame](#preview-frame)
    - [Jobs and progress](#jobs-and-progress)
    - [Titles and descriptions](#titles-and-descriptions)
+   - [YouTube uploads](#youtube-uploads)
 4. [Configuration](#configuration)
 5. [Command line](#command-line)
 6. [Project layout](#project-layout)
@@ -105,7 +108,7 @@ Click **Render video** (or **Render Shorts**). A panel shows progress, the curre
 
 ### Library
 
-Every rendered video, newest first: play it, **copy the YouTube title or description**, download it or delete it. Each card shows its surah folder. Filter by Videos/Shorts or search.
+Every rendered video, newest first: play it, **copy the YouTube title or description**, download it, delete it, or **upload it to YouTube**. Each card shows its surah folder and, once uploaded, an *On YouTube* link. Filter by Videos, Shorts or *Not on YouTube*, or search. Tick the box on several cards to upload them together.
 
 ### Where videos are saved
 
@@ -138,6 +141,30 @@ node organize-output.js --apply   # moves them (with their title/description fil
 ### Branding
 
 Channel name, YouTube handle, subscribe line for descriptions, logo upload (drag and drop), and intro/outro lengths for videos and Shorts.
+
+### Uploading to YouTube
+
+**One-time setup** (Settings page — about 10 minutes):
+
+1. In [Google Cloud Console](https://console.cloud.google.com/projectcreate) create a project and enable **YouTube Data API v3**.
+2. Set up the **OAuth consent screen**: type *External*, add your Gmail as a test user, then **Publish app**. (Left in *Testing*, the sign-in expires every 7 days.)
+3. Create an **OAuth client** of type **Desktop app**, and paste its client ID and secret into *Settings → OAuth client*.
+4. Click **Connect YouTube** and sign in with the account that owns the channel. Google warns that the app isn't verified — it's your own app, so choose *Advanced → Go to …*.
+
+**Uploading**
+
+1. In the **Library**, tick one or more videos/Shorts (or use the upload icon on one card) and click **Upload to YouTube**.
+2. In the dialog, check each title (max 100 characters), description and tags, and choose:
+   - **Visibility** — Private, Unlisted, Public, or **Scheduled**: a first publish time and the hours between videos (e.g. one Short a day at 18:00);
+   - **Playlist** — none, one per surah (*Surah Al-Ikhlas | সূরা আল-ইখলাস*, created if missing) or a custom name.
+3. The **Uploads** page shows the queue: progress, *Watch* and *Studio* links, Cancel/Retry, and how much of today's API quota is left.
+
+Defaults for visibility, category, playlist, schedule, tags and notifications are set in *Settings → Upload defaults*.
+
+> **Uploads stay Private until Google audits your project.** YouTube locks every video uploaded through an unaudited API
+> project to Private. Apply with the [YouTube API audit form](https://support.google.com/youtube/contact/yt_api_form);
+> until then, publish each video yourself in YouTube Studio (the queue shows a note when this happens). It's also a good
+> moment to look at the copyright *Checks* result before publishing.
 
 ### Backgrounds
 
@@ -299,6 +326,17 @@ For every video:
 
 The introduction comes from **`intros.json`** — keyed by surah (`"112"`) or by an exact verse/range (`"2:255"`, `"2:285-286"`). Surahs without an entry use the short summary from Quran.com (Tafhim al-Qur'an).
 
+### YouTube uploads
+
+`youtube.js` talks to the YouTube Data API v3 with Node's built-in `fetch` (no packages); `upload-queue.js` runs the queue.
+
+- **Sign-in** — OAuth 2.0 for desktop apps: the Studio opens Google's consent page with a PKCE challenge, and Google sends the browser back to `http://127.0.0.1:4173/` with a one-time code. The server exchanges it for a **refresh token**, stored with the client ID/secret in `%USERPROFILE%\.quran-channel\youtube.json` — outside the project, never committed and never sent to the browser. *Disconnect* revokes it at Google.
+- **Metadata** — title and description come from the `.title.txt` / `.description.txt` files (YouTube doesn't allow `<` or `>`, so they're swapped for ‹ ›). Tags combine your defaults with the surah's English and Bangla names and the reciter. Audio language is Arabic; *made for kids* is off unless you change it. Videos whose description names an **AI-generated voice** are flagged as altered/synthetic content, as YouTube requires.
+- **Resumable upload** — the file goes up in 8 MB chunks. After a network error or server error the uploader asks YouTube how much arrived and continues from there (with back-off); an expired access token is refreshed automatically. The session URL is saved, so if the Studio is closed mid-upload the next start resumes it.
+- **Queue** — one upload at a time, saved in `output/upload-queue.json`. Finished uploads are recorded in `output/uploads.json` (video ID, URL, visibility, playlist), which the Library uses for its *On YouTube* links and to warn before uploading the same file twice.
+- **Quota** — the API allows 10,000 units a day; an upload costs about 1,600 and a playlist step 50, so **about 6 uploads a day**. The Uploads page tracks today's use (reset at midnight Pacific Time). If YouTube reports the quota or the channel's daily upload limit is used up, the queue pauses with that message; press **Resume** the next day. More quota can be requested from Google after the audit.
+- **Safety** — the YouTube endpoints only accept same-origin JSON requests from the Studio page on `localhost`/`127.0.0.1`, so another website can't trigger an upload through it.
+
 ---
 
 ## Configuration
@@ -422,6 +460,8 @@ quran-channel/
 ├── make-video.js          Renderer (CLI + used by the server)
 ├── server.js              Studio web server
 ├── fetch-backgrounds.js   Stock footage downloader (Pixabay / Pexels)
+├── youtube.js             YouTube sign-in, resumable upload, playlists
+├── upload-queue.js        Upload queue and upload log
 ├── ui/                    Studio front end (index.html, styles.css, app.js)
 ├── channel.json           Branding and default style
 ├── intros.json            Description introductions
@@ -430,7 +470,8 @@ quran-channel/
 ├── translation-audio/     Your own Bangla narration recordings (optional)                       [git-ignored]
 ├── assets/                Uploaded logo
 ├── backgrounds/           Your clips: landscape/ (videos), portrait/ (Shorts), credits.json   [git-ignored]
-├── output/                Videos/<NNN - Name>/ and Shorts/<NNN - Name>/ with .title/.description [git-ignored]
+├── output/                Videos/<NNN - Name>/ and Shorts/<NNN - Name>/ with .title/.description,
+│                          uploads.json + upload-queue.json                                       [git-ignored]
 ├── fonts/                 Downloaded fonts                                                      [git-ignored]
 └── cache/                 API responses, audio, reels, thumbnails, previews, work files        [git-ignored]
 ```
@@ -455,6 +496,12 @@ All endpoints are local only (`127.0.0.1`).
 | `GET /api/backgrounds/thumb?id=` | Cached JPEG thumbnail |
 | `POST /api/backgrounds/upload?orientation=&name=` | Upload a clip |
 | `POST /api/backgrounds/fetch` | Download stock footage (job) |
+| `GET /api/youtube` · `PUT /api/youtube/settings` | Connection status, upload defaults, quota · save defaults |
+| `POST /api/youtube/client` · `DELETE /api/youtube/client` | Save / remove the OAuth client |
+| `POST /api/youtube/connect` · `POST /api/youtube/disconnect` | Start Google sign-in (returns the URL) · sign out and revoke |
+| `POST /api/uploads/prepare` | Suggested title, description, tags and playlist for library videos |
+| `GET /api/uploads` · `POST /api/uploads` | Queue and quota · add videos to the queue |
+| `POST /api/uploads/<id>/cancel\|retry\|remove` · `/resume` · `/clear` | Manage queue items |
 | `GET /media/<output\|previews\|assets\|backgrounds>/…` | Files, with range requests for video seeking |
 
 ---
@@ -471,6 +518,10 @@ All endpoints are local only (`127.0.0.1`).
 | **No word highlighting** | The feature is switched off (`--no-highlight`). |
 | **Highlight a little early/late** | Reciters without published timings use [audio alignment](#word-timings-by-audio-alignment); long ayat can be off by up to ~0.5 s. Delete `cache/timings/` to recompute. |
 | **"Azure speech error 401"** | Wrong key or region. The region is the one shown on your Speech resource (e.g. `southeastasia`). |
+| **Uploaded video is Private although I chose Public** | Your Google Cloud project hasn't passed the YouTube API audit; publish it in YouTube Studio, and apply for the audit (Settings has the link). |
+| **"Your YouTube sign-in expired"** every week | The OAuth consent screen is still in *Testing*. Click **Publish app** there, then connect again. |
+| **"redirect_uri_mismatch"** when connecting | The OAuth client must be of type **Desktop app** (not *Web application*). |
+| **"The daily YouTube API quota is used up"** | About 6 uploads fit in a day. The queue pauses; press **Resume** after midnight Pacific Time. |
 | **"Missing recording: translation-audio/bn/…"** | With *My recordings*, every ayah in the range (and `001/001001.mp3` for the Bismillah) needs a file. |
 
 ---

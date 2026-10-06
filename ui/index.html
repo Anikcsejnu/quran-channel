@@ -43,6 +43,13 @@
       <button class="nav-item" data-view="backgrounds">
         <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m3 16 5-5 4 4 3-3 6 6"/><circle cx="16" cy="9" r="1.5"/></svg>Backgrounds
       </button>
+      <button class="nav-item" data-view="uploads">
+        <svg viewBox="0 0 24 24"><path d="M12 16V4m0 0-4 4m4-4 4 4M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>Uploads
+        <span class="nav-count" id="uploadsCount"></span>
+      </button>
+      <button class="nav-item" data-view="settings">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>Settings
+      </button>
     </nav>
 
     <div class="sidebar-foot">
@@ -401,12 +408,22 @@
             <button data-value="all" class="active">All</button>
             <button data-value="long">Videos</button>
             <button data-value="short">Shorts</button>
+            <button data-value="pending">Not on YouTube</button>
           </div>
           <button class="icon-btn" id="btnRefreshLibrary" title="Refresh" aria-label="Refresh">
             <svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>
           </button>
         </div>
       </header>
+      <div class="select-bar" id="selectBar" hidden>
+        <span id="selectCount"></span>
+        <button class="btn sm ghost" id="btnSelectVisible">Select all shown</button>
+        <button class="btn sm ghost" id="btnSelectNone">Clear</button>
+        <span class="toolbar-spacer"></span>
+        <button class="btn sm primary" id="btnUploadSelected">
+          <svg viewBox="0 0 24 24"><path d="M12 16V4m0 0-4 4m4-4 4 4M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>Upload to YouTube
+        </button>
+      </div>
       <div class="library-grid" id="libraryGrid"></div>
       <div class="empty" id="libraryEmpty" hidden>
         <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m10 9 5 3-5 3z"/></svg>
@@ -552,6 +569,148 @@
         <p>Without clips, videos use an animated gradient background.</p>
       </div>
     </section>
+    <!-- ================= UPLOADS ================= -->
+    <section class="view" id="view-uploads">
+      <header class="page-head">
+        <div>
+          <h1>Uploads</h1>
+          <p>Videos go to YouTube one at a time. Closing the Studio pauses the queue; it continues where it stopped.</p>
+        </div>
+        <div class="head-actions">
+          <button class="btn" id="btnClearUploads">Clear finished</button>
+          <button class="btn primary" data-goto="library">Choose videos</button>
+        </div>
+      </header>
+
+      <div class="upload-top">
+        <div class="card quota-card">
+          <div class="card-head"><h2>Today’s API quota</h2><span class="hint" id="quotaReset">resets at midnight Pacific Time</span></div>
+          <div class="progress"><div class="bar" id="quotaBar"></div></div>
+          <div class="job-meta"><span id="quotaUsed"></span><span id="quotaLeft"></span></div>
+        </div>
+        <div class="card yt-mini" id="ytMini"></div>
+      </div>
+
+      <div class="notice warn" id="uploadPaused" hidden>
+        <span id="uploadPausedText"></span>
+        <button class="btn sm" id="btnResumeUploads">Resume</button>
+      </div>
+
+      <div class="upload-list" id="uploadList"></div>
+      <div class="empty" id="uploadsEmpty" hidden>
+        <svg viewBox="0 0 24 24"><path d="M12 16V4m0 0-4 4m4-4 4 4M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>
+        <h3>Nothing uploading</h3>
+        <p>Select videos or Shorts in the Library and choose <b>Upload to YouTube</b>.</p>
+        <button class="btn primary" data-goto="library">Open library</button>
+      </div>
+    </section>
+
+    <!-- ================= SETTINGS ================= -->
+    <section class="view" id="view-settings">
+      <header class="page-head">
+        <div>
+          <h1>Settings</h1>
+          <p>Connect your YouTube channel and choose how uploads are published.</p>
+        </div>
+      </header>
+
+      <div class="settings-grid">
+        <div class="card">
+          <div class="card-head"><h2>YouTube channel</h2><span class="badge" id="ytBadge">Not connected</span></div>
+          <div id="ytConnected" hidden>
+            <div class="yt-channel">
+              <img id="ytAvatar" alt="" hidden>
+              <div><b id="ytChannelName"></b><small id="ytChannelSub"></small></div>
+            </div>
+            <div class="btn-row">
+              <button class="btn" id="btnYtReconnect">Switch channel</button>
+              <button class="btn ghost danger-text" id="btnYtDisconnect">Disconnect</button>
+            </div>
+          </div>
+          <div id="ytConnect" hidden>
+            <p class="field-note" id="ytConnectNote">Your OAuth client is saved. Sign in with the Google account that owns the channel.</p>
+            <div class="btn-row">
+              <button class="btn primary" id="btnYtConnect">
+                <svg viewBox="0 0 24 24"><path d="M10 14 21 3m0 0h-7m7 0v7M19 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5"/></svg>Connect YouTube
+              </button>
+              <span class="connecting" id="ytWaiting" hidden><span class="spinner"></span>Waiting for Google sign-in…</span>
+            </div>
+          </div>
+          <div class="notice error" id="ytError" hidden></div>
+
+          <details class="client-box" id="clientBox">
+            <summary>OAuth client <span class="hint" id="clientSummary"></span></summary>
+            <label class="label" for="ytClientId">Client ID</label>
+            <input id="ytClientId" placeholder="1234567890-abc….apps.googleusercontent.com" autocomplete="off" spellcheck="false">
+            <label class="label" for="ytClientSecret">Client secret <span class="hint" id="secretHint"></span></label>
+            <input id="ytClientSecret" type="password" placeholder="GOCSPX-…" autocomplete="off" spellcheck="false">
+            <div class="btn-row">
+              <button class="btn" id="btnSaveClient">Save client</button>
+              <button class="btn ghost danger-text" id="btnRemoveClient">Remove</button>
+            </div>
+            <p class="field-note">Stored only on this computer, in <code id="ytConfigPath">%USERPROFILE%\.quran-channel\youtube.json</code> — never in the project or the browser.</p>
+          </details>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h2>One-time Google setup</h2><span class="badge">~10 min</span></div>
+          <ol class="steps">
+            <li>Open <a href="https://console.cloud.google.com/projectcreate" target="_blank" rel="noopener">Google Cloud Console</a> and create a project (e.g. “Quran Studio”).</li>
+            <li>Enable <a href="https://console.cloud.google.com/apis/library/youtube.googleapis.com" target="_blank" rel="noopener">YouTube Data API v3</a>.</li>
+            <li><a href="https://console.cloud.google.com/auth/branding" target="_blank" rel="noopener">OAuth consent screen</a>: type <b>External</b>, add your Gmail as a test user, then <b>Publish app</b> (otherwise sign-in expires every 7 days).</li>
+            <li><a href="https://console.cloud.google.com/auth/clients" target="_blank" rel="noopener">Create OAuth client</a> → application type <b>Desktop app</b>. Paste its ID and secret into <i>OAuth client</i>.</li>
+            <li>Click <b>Connect YouTube</b> and allow access. Google may warn that the app isn’t verified — it’s your own app: <i>Advanced → Go to …</i></li>
+          </ol>
+          <div class="notice warn">
+            <b>Uploads stay Private until Google audits your project.</b>
+            Apply with the <a href="https://support.google.com/youtube/contact/yt_api_form" target="_blank" rel="noopener">YouTube API audit form</a>.
+            Until then, publish each video yourself in YouTube Studio — a good moment to check the copyright <i>Checks</i> result.
+          </div>
+        </div>
+
+        <div class="card wide">
+          <div class="card-head"><h2>Upload defaults</h2><button class="btn sm primary" id="btnSaveYtSettings">Save defaults</button></div>
+          <div class="settings-cols">
+            <div>
+              <label class="label">Visibility</label>
+              <div class="segmented" id="ytPrivacy">
+                <button data-value="private" class="active">Private</button>
+                <button data-value="unlisted">Unlisted</button>
+                <button data-value="public">Public</button>
+              </div>
+              <label class="label" for="ytCategory">Category</label>
+              <select id="ytCategory"></select>
+              <label class="label">Schedule defaults <span class="hint">used when you pick “Scheduled”</span></label>
+              <div class="row-2">
+                <div class="input-suffix"><input type="time" id="ytScheduleTime" aria-label="Publish time"></div>
+                <div class="input-suffix"><input type="number" id="ytScheduleEvery" min="1" max="168" aria-label="Hours between videos"><span>h apart</span></div>
+              </div>
+            </div>
+            <div>
+              <label class="label">Playlist</label>
+              <div class="segmented" id="ytPlaylist">
+                <button data-value="none">None</button>
+                <button data-value="surah" class="active">One per surah</button>
+                <button data-value="custom">Custom</button>
+              </div>
+              <input id="ytCustomPlaylist" placeholder="Playlist name" maxlength="150" hidden>
+              <p class="field-note">Missing playlists are created automatically (public).</p>
+              <div class="toggles compact">
+                <label class="toggle"><input type="checkbox" id="ytNotify" checked><span class="switch"></span>
+                  <span><b>Notify subscribers</b><small>For public videos</small></span></label>
+                <label class="toggle"><input type="checkbox" id="ytKids"><span class="switch"></span>
+                  <span><b>Made for kids</b><small>Disables comments and some features</small></span></label>
+              </div>
+            </div>
+            <div>
+              <label class="label" for="ytTags">Default tags <span class="hint">comma separated</span></label>
+              <textarea id="ytTags" rows="6"></textarea>
+              <p class="field-note">Surah names (English and Bangla) and the reciter are added per video. Videos using the AI Bangla voice are marked as altered/synthetic content automatically.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
   </main>
 </div>
 
@@ -631,6 +790,56 @@
     <div class="modal-actions">
       <button class="btn ghost" id="pickerCancel">Cancel</button>
       <button class="btn primary" id="pickerApply">Use selection</button>
+    </div>
+  </div>
+</dialog>
+
+<!-- Upload dialog -->
+<dialog class="modal upload-modal" id="uploadDialog" aria-labelledby="uploadDialogTitle">
+  <div class="modal-head">
+    <div>
+      <h2 id="uploadDialogTitle">Upload to YouTube</h2>
+      <p id="uploadDialogSub"></p>
+    </div>
+    <button class="icon-btn" id="uploadClose" aria-label="Close">
+      <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg>
+    </button>
+  </div>
+
+  <div class="modal-toolbar upload-options">
+    <div class="opt">
+      <span class="opt-label">Visibility</span>
+      <div class="segmented sm" id="upPrivacy">
+        <button data-value="private">Private</button>
+        <button data-value="unlisted">Unlisted</button>
+        <button data-value="public">Public</button>
+        <button data-value="scheduled">Scheduled</button>
+      </div>
+    </div>
+    <div class="opt" id="upScheduleOpt" hidden>
+      <span class="opt-label">First at</span>
+      <input type="datetime-local" id="upFirstAt">
+      <span class="opt-label">then every</span>
+      <div class="input-suffix narrow"><input type="number" id="upEvery" min="1" max="168"><span>h</span></div>
+    </div>
+    <div class="opt">
+      <span class="opt-label">Playlist</span>
+      <select id="upPlaylistMode">
+        <option value="none">None</option>
+        <option value="surah">One per surah</option>
+        <option value="custom">Custom…</option>
+      </select>
+      <input id="upCustomPlaylist" placeholder="Playlist name" maxlength="150" hidden>
+    </div>
+  </div>
+
+  <div class="upload-body" id="uploadItems"></div>
+
+  <div class="modal-foot">
+    <div class="pp-summary" id="uploadSummary"></div>
+    <div class="modal-actions">
+      <button class="btn ghost" id="uploadCancel">Cancel</button>
+      <button class="btn primary" id="uploadStart">Upload</button>
     </div>
   </div>
 </dialog>

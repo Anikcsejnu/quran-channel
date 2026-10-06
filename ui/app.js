@@ -33,6 +33,7 @@ const ICONS = {
   text: '<svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg>',
   download: '<svg viewBox="0 0 24 24"><path d="M12 4v12m0 0-4-4m4 4 4-4M4 20h16"/></svg>',
   x: '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg>',
+  upload: '<svg viewBox="0 0 24 24"><path d="M12 16V4m0 0-4 4m4-4 4 4M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>',
 };
 
 function toast(message, type = 'ok') {
@@ -145,11 +146,15 @@ function payload() {
 
 // ---------- Navigation ----------
 
+const VIEWS = ['create', 'library', 'branding', 'backgrounds', 'uploads', 'settings'];
+
 function showView(name) {
   $$('.view').forEach(v => v.classList.toggle('active', v.id === `view-${name}`));
   $$('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.view === name));
   if (name === 'library') loadLibrary();
   if (name === 'backgrounds') loadBackgrounds();
+  if (name === 'uploads') { loadYoutube(); loadUploads(); }
+  if (name === 'settings') loadYoutube();
   history.replaceState(null, '', `#${name}`);
   window.scrollTo({ top: 0 });
 }
@@ -157,7 +162,7 @@ function showView(name) {
 $$('.nav-item').forEach(b => b.addEventListener('click', () => showView(b.dataset.view)));
 window.addEventListener('hashchange', () => {
   const view = location.hash.slice(1);
-  if (meta && ['create', 'library', 'branding', 'backgrounds'].includes(view)) showView(view);
+  if (meta && VIEWS.includes(view)) showView(view);
 });
 document.addEventListener('click', e => {
   const go = e.target.closest('[data-goto]');
@@ -1281,6 +1286,7 @@ $('#jobOpenLibrary').addEventListener('click', () => showView('library'));
 // ---------- Library ----------
 
 let libraryFilter = 'all';
+const selected = new Set(); // library ids picked for upload
 
 async function loadLibrary() {
   try {
@@ -1292,11 +1298,14 @@ async function loadLibrary() {
 
 function renderLibrary() {
   const q = $('#librarySearch').value.trim().toLowerCase();
-  const items = library.filter(v => (libraryFilter === 'all' || v.format === libraryFilter)
+  const items = library.filter(v => (libraryFilter === 'all' || v.format === libraryFilter || (libraryFilter === 'pending' && !v.youtube))
     && (!q || `${v.title} ${v.name} ${v.folder}`.toLowerCase().includes(q)));
+  for (const id of [...selected]) if (!library.some(v => v.id === id)) selected.delete(id);
+  renderSelectBar();
   $('#libraryEmpty').hidden = library.length > 0;
   $('#libraryGrid').innerHTML = items.map(v => `
-    <article class="card vcard ${v.format}" data-id="${esc(v.id)}">
+    <article class="card vcard ${v.format} ${selected.has(v.id) ? 'selected' : ''}" data-id="${esc(v.id)}">
+      <label class="pick" title="Select for upload"><input type="checkbox" data-act="pick" ${selected.has(v.id) ? 'checked' : ''} aria-label="Select ${esc(v.title || v.name)}">${ICONS.check}</label>
       <div class="player"><video src="${esc(v.url)}#t=2.5" preload="metadata" controls playsinline></video></div>
       <div class="body">
         <div class="title">${esc(v.title || v.name)}</div>
@@ -1304,12 +1313,14 @@ function renderLibrary() {
           <span class="tag ${v.format}">${v.format === 'short' ? 'Short' : 'Video'}</span>
           ${v.folder ? `<span title="output/${esc(v.folder)}">${esc(v.folder.split(/[\\/]/).pop())}</span><span>·</span>` : ''}
           <span>${fmtSize(v.size)}</span><span>·</span><span>${fmtDate(v.modified)}</span>
+          ${v.youtube ? `<a class="yt-tag" href="${esc(v.youtube.url)}" target="_blank" rel="noopener" title="Uploaded ${esc(fmtDate(v.youtube.uploadedAt))}">${ICONS.play}On YouTube${v.youtube.privacy === 'scheduled' ? ' · scheduled' : v.youtube.resultPrivacy === 'private' ? ' · private' : ''}</a>` : ''}
         </div>
         <pre hidden>${esc(v.description)}</pre>
         <div class="actions">
           <button class="btn sm" data-act="title">${ICONS.copy}Title</button>
           <button class="btn sm" data-act="desc">${ICONS.copy}Description</button>
           <span class="spacer"></span>
+          <button class="icon-btn sm" data-act="upload" title="Upload to YouTube" aria-label="Upload to YouTube">${ICONS.upload}</button>
           <button class="icon-btn sm" data-act="toggle" title="Show description" aria-label="Show description">${ICONS.text}</button>
           <a class="icon-btn sm" href="${esc(v.url)}" download title="Download" aria-label="Download">${ICONS.download}</a>
           <button class="icon-btn sm danger-text" data-act="delete" title="Delete" aria-label="Delete">${ICONS.trash}</button>
@@ -1326,6 +1337,13 @@ $('#libraryGrid').addEventListener('click', async e => {
   if (!b) return;
   const card = b.closest('.vcard');
   const v = library.find(x => x.id === card.dataset.id);
+  if (b.dataset.act === 'pick') {
+    if (b.checked) selected.add(v.id); else selected.delete(v.id);
+    card.classList.toggle('selected', b.checked);
+    renderSelectBar();
+    return;
+  }
+  if (b.dataset.act === 'upload') openUploadDialog([v.id]);
   if (b.dataset.act === 'title') copy(v.title || v.name, 'Title');
   if (b.dataset.act === 'desc') copy(v.description, 'Description');
   if (b.dataset.act === 'toggle') { const pre = $('pre', card); pre.hidden = !pre.hidden; }
@@ -1336,6 +1354,21 @@ $('#libraryGrid').addEventListener('click', async e => {
   }
 });
 $('#librarySearch').addEventListener('input', debounce(renderLibrary, 120));
+
+function renderSelectBar() {
+  $('#selectBar').hidden = !selected.size;
+  $('#selectCount').textContent = `${selected.size} selected`;
+}
+$('#btnSelectVisible').addEventListener('click', () => {
+  $$('#libraryGrid .vcard').forEach(c => selected.add(c.dataset.id));
+  renderLibrary();
+});
+$('#btnSelectNone').addEventListener('click', () => { selected.clear(); renderLibrary(); });
+$('#btnUploadSelected').addEventListener('click', () => {
+  // Oldest render first, so a batch of Shorts is published in verse order
+  const ids = library.filter(v => selected.has(v.id)).map(v => v.id).reverse();
+  openUploadDialog(ids);
+});
 bindSegmented($('#libraryFilter'), v => { libraryFilter = v; renderLibrary(); });
 $('#btnRefreshLibrary').addEventListener('click', loadLibrary);
 
@@ -1499,6 +1532,385 @@ bindDrop($('#bgDrop'), $('#bgInput'), async files => {
   loadBackgrounds();
 });
 
+// ---------- YouTube: settings ----------
+
+let yt = null; // GET /api/youtube
+
+async function loadYoutube() {
+  try {
+    yt = await api('/api/youtube');
+    renderYoutubeSettings();
+    renderYtMini();
+  } catch (e) { toast(e.message, 'error'); }
+  return yt;
+}
+
+function renderYoutubeSettings() {
+  const connected = yt.connected;
+  const badge = $('#ytBadge');
+  badge.textContent = connected ? 'Connected' : yt.configured ? 'Not connected' : 'Setup needed';
+  badge.className = `badge ${connected ? '' : 'off'}`;
+  $('#ytConnected').hidden = !connected;
+  $('#ytConnect').hidden = connected || !yt.configured;
+  if (connected) {
+    const ch = yt.channel || {};
+    $('#ytChannelName').textContent = ch.title || 'Your channel';
+    $('#ytChannelSub').textContent = [ch.handle, yt.connectedAt ? `connected ${fmtDate(yt.connectedAt)}` : ''].filter(Boolean).join(' · ');
+    $('#ytAvatar').hidden = !ch.thumbnail;
+    if (ch.thumbnail) $('#ytAvatar').src = ch.thumbnail;
+  }
+  $('#ytError').hidden = !yt.lastError || connected;
+  $('#ytError').textContent = yt.lastError || '';
+
+  // OAuth client: open it while it still needs filling in
+  $('#clientBox').open = !yt.configured;
+  $('#clientSummary').textContent = yt.configured ? `· ${yt.clientId.slice(0, 14)}…` : '· required';
+  if (!$('#ytClientId').value) $('#ytClientId').value = yt.clientId;
+  $('#ytClientSecret').placeholder = yt.configured ? '•••••••• saved — leave empty to keep' : 'GOCSPX-…';
+  $('#secretHint').textContent = yt.configured ? 'saved' : '';
+  $('#btnRemoveClient').hidden = !yt.configured;
+
+  const st = yt.settings;
+  setSegmented($('#ytPrivacy'), st.privacy);
+  $('#ytCategory').innerHTML = Object.entries(yt.categories).map(([id, n]) => `<option value="${id}">${esc(n)}</option>`).join('');
+  $('#ytCategory').value = st.categoryId;
+  $('#ytScheduleTime').value = st.scheduleTime;
+  $('#ytScheduleEvery').value = st.scheduleEveryHours;
+  setSegmented($('#ytPlaylist'), st.playlist);
+  $('#ytCustomPlaylist').hidden = st.playlist !== 'custom';
+  $('#ytCustomPlaylist').value = st.customPlaylist || '';
+  $('#ytNotify').checked = st.notifySubscribers;
+  $('#ytKids').checked = st.madeForKids;
+  $('#ytTags').value = (st.tags || []).join(', ');
+}
+
+let ytSettingsDraft = {};
+bindSegmented($('#ytPrivacy'), v => { ytSettingsDraft.privacy = v; });
+bindSegmented($('#ytPlaylist'), v => { ytSettingsDraft.playlist = v; $('#ytCustomPlaylist').hidden = v !== 'custom'; });
+
+$('#btnSaveYtSettings').addEventListener('click', async () => {
+  try {
+    const body = {
+      ...yt.settings, ...ytSettingsDraft,
+      categoryId: $('#ytCategory').value,
+      scheduleTime: $('#ytScheduleTime').value,
+      scheduleEveryHours: +$('#ytScheduleEvery').value,
+      customPlaylist: $('#ytCustomPlaylist').value,
+      notifySubscribers: $('#ytNotify').checked,
+      madeForKids: $('#ytKids').checked,
+      tags: $('#ytTags').value.split(',').map(t => t.trim()).filter(Boolean),
+    };
+    yt.settings = (await api('/api/youtube/settings', { method: 'PUT', json: body })).settings;
+    ytSettingsDraft = {};
+    renderYoutubeSettings();
+    toast('Upload defaults saved');
+  } catch (e) { toast(e.message, 'error'); }
+});
+
+$('#btnSaveClient').addEventListener('click', async () => {
+  try {
+    await api('/api/youtube/client', { method: 'POST', json: { clientId: $('#ytClientId').value, clientSecret: $('#ytClientSecret').value } });
+    $('#ytClientSecret').value = '';
+    await loadYoutube();
+    toast('OAuth client saved — now connect your channel');
+  } catch (e) { toast(e.message, 'error'); }
+});
+
+$('#btnRemoveClient').addEventListener('click', async () => {
+  if (!confirm('Remove the OAuth client and sign out of YouTube on this computer?')) return;
+  try {
+    await api('/api/youtube/client', { method: 'DELETE' });
+    $('#ytClientId').value = '';
+    await loadYoutube();
+    toast('OAuth client removed');
+  } catch (e) { toast(e.message, 'error'); }
+});
+
+let connectTimer = null;
+async function connectYoutube() {
+  try {
+    const { url } = await api('/api/youtube/connect', { method: 'POST', json: {} });
+    const win = window.open(url, '_blank', 'noopener');
+    if (!win) location.href = url; // pop-up blocked: sign in in this tab, Google brings it back
+    $('#ytWaiting').hidden = false;
+    const was = yt.connectedAt;
+    const started = Date.now();
+    clearInterval(connectTimer);
+    connectTimer = setInterval(async () => {
+      const s = await api('/api/youtube').catch(() => null);
+      if (s && s.connected && s.connectedAt !== was) {
+        clearInterval(connectTimer);
+        $('#ytWaiting').hidden = true;
+        yt = s;
+        renderYoutubeSettings();
+        renderYtMini();
+        toast(`Connected to ${s.channel ? s.channel.title : 'YouTube'}`);
+      } else if (Date.now() - started > 5 * 60 * 1000) {
+        clearInterval(connectTimer);
+        $('#ytWaiting').hidden = true;
+      }
+    }, 2000);
+  } catch (e) { toast(e.message, 'error'); }
+}
+$('#btnYtConnect').addEventListener('click', connectYoutube);
+$('#btnYtReconnect').addEventListener('click', connectYoutube);
+
+$('#btnYtDisconnect').addEventListener('click', async () => {
+  if (!confirm('Disconnect this YouTube channel? Queued uploads will wait until you connect again.')) return;
+  try {
+    await api('/api/youtube/disconnect', { method: 'POST', json: {} });
+    await loadYoutube();
+    toast('YouTube disconnected');
+  } catch (e) { toast(e.message, 'error'); }
+});
+
+// ---------- YouTube: upload dialog ----------
+
+let uploadDraft = []; // [{ ...suggestion, include, title, description, tags }]
+let uploadOpts = {};
+
+const pad2 = n => String(n).padStart(2, '0');
+const toLocalInput = d => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+// Next time-of-day (e.g. "18:00") that is at least an hour away
+function nextSlot(hhmm) {
+  const [h, m] = hhmm.split(':').map(Number);
+  const d = new Date();
+  d.setHours(h, m, 0, 0);
+  while (d.getTime() < Date.now() + 60 * 60 * 1000) d.setDate(d.getDate() + 1);
+  return d;
+}
+
+async function openUploadDialog(ids) {
+  if (!yt) await loadYoutube();
+  if (!yt || !yt.connected) {
+    toast('Connect your YouTube channel first', 'error');
+    showView('settings');
+    return;
+  }
+  let data;
+  try { data = await api('/api/uploads/prepare', { method: 'POST', json: { ids } }); }
+  catch (e) { toast(e.message, 'error'); return; }
+  const st = data.settings;
+  uploadOpts = {
+    privacy: st.privacy, every: st.scheduleEveryHours,
+    firstAt: toLocalInput(nextSlot(st.scheduleTime)),
+    playlistMode: st.playlist, customPlaylist: st.customPlaylist || '',
+  };
+  uploadDraft = data.items.map(it => ({ ...it, include: !it.queued }));
+  setSegmented($('#upPrivacy'), uploadOpts.privacy);
+  $('#upFirstAt').value = uploadOpts.firstAt;
+  $('#upEvery').value = uploadOpts.every;
+  $('#upPlaylistMode').value = uploadOpts.playlistMode;
+  $('#upCustomPlaylist').value = uploadOpts.customPlaylist;
+  renderUploadDialog();
+  $('#uploadDialog').showModal();
+}
+
+const draftPlaylist = it => (uploadOpts.playlistMode === 'surah' ? it.surahPlaylist
+  : uploadOpts.playlistMode === 'custom' ? uploadOpts.customPlaylist.trim() : '');
+function draftSchedule() {
+  if (uploadOpts.privacy !== 'scheduled') return new Map();
+  const first = new Date(uploadOpts.firstAt);
+  const every = Math.max(1, +uploadOpts.every || 24);
+  const map = new Map();
+  let i = 0;
+  for (const it of uploadDraft) if (it.include) map.set(it.id, isNaN(first) ? null : new Date(first.getTime() + i++ * every * 3600 * 1000));
+  return map;
+}
+
+function renderUploadDialog() {
+  $('#upScheduleOpt').hidden = uploadOpts.privacy !== 'scheduled';
+  $('#upCustomPlaylist').hidden = uploadOpts.playlistMode !== 'custom';
+  const schedule = draftSchedule();
+  const fmtWhen = d => d.toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  $('#uploadItems').innerHTML = uploadDraft.map((it, i) => {
+    const lib = library.find(v => v.id === it.id);
+    const pl = draftPlaylist(it);
+    const when = schedule.get(it.id);
+    return `
+    <div class="urow ${it.format}" data-i="${i}">
+      ${lib ? `<video src="${esc(lib.url)}#t=2.5" preload="metadata" muted playsinline></video>` : '<div></div>'}
+      <div class="fields">
+        <div class="row-top">
+          <label class="toggle-inline"><input type="checkbox" data-f="include" ${it.include ? 'checked' : ''}> Upload</label>
+          <span class="count ${it.title.length > 100 ? 'over' : ''}" data-count>${it.title.length}/100</span>
+        </div>
+        <input data-f="title" value="${esc(it.title)}" maxlength="140" aria-label="Title">
+        <div class="chips-line">
+          <span class="tag ${it.format}">${it.format === 'short' ? 'Short' : 'Video'}</span>
+          ${pl ? `<span>Playlist: ${esc(pl)}</span>` : ''}
+          ${when ? `<span class="when">Publishes ${esc(fmtWhen(when))}</span>` : ''}
+          ${it.syntheticMedia ? '<span title="Uses the AI Bangla voice">· marked as synthetic voice</span>' : ''}
+        </div>
+        ${it.uploaded ? `<div class="already">Already uploaded ${fmtDate(it.uploaded.uploadedAt)} — <a href="${esc(it.uploaded.url)}" target="_blank" rel="noopener">view on YouTube</a>. Uploading again creates a second copy.</div>` : ''}
+        ${it.queued ? '<div class="already">Already in the upload queue.</div>' : ''}
+        <details><summary>Description &amp; tags</summary>
+          <textarea data-f="description" rows="8" aria-label="Description">${esc(it.description)}</textarea>
+          <input data-f="tags" value="${esc(it.tags.join(', '))}" aria-label="Tags" style="margin-top:6px">
+        </details>
+      </div>
+    </div>`;
+  }).join('');
+  updateUploadSummary();
+}
+
+function updateUploadSummary() {
+  const n = uploadDraft.filter(it => it.include).length;
+  const q = yt.quota || { used: 0, limit: 10000, perUpload: 1600 };
+  const fits = Math.max(0, Math.floor((q.limit - q.used) / (q.perUpload + 50)));
+  $('#uploadDialogSub').textContent = `${uploadDraft.length} selected · uploads go to ${yt.channel ? yt.channel.title : 'your channel'}`;
+  $('#uploadSummary').innerHTML = `<b>${n}</b> to upload` + (n > fits
+    ? ` · <span class="warn">today’s API quota covers about ${fits}; the rest wait until it resets</span>`
+    : ` · about ${fits} upload${fits === 1 ? '' : 's'} left in today’s quota`);
+  $('#uploadStart').disabled = !n;
+  $('#uploadStart').textContent = n ? `Upload ${n} ${n === 1 ? 'video' : 'videos'}` : 'Upload';
+}
+
+$('#uploadItems').addEventListener('input', e => {
+  const row = e.target.closest('.urow');
+  const f = e.target.dataset.f;
+  if (!row || !f) return;
+  const it = uploadDraft[+row.dataset.i];
+  if (f === 'include') { it.include = e.target.checked; renderUploadDialog(); return; }
+  if (f === 'tags') it.tags = e.target.value.split(',').map(t => t.trim()).filter(Boolean);
+  else it[f] = e.target.value;
+  if (f === 'title') {
+    const c = $('[data-count]', row);
+    c.textContent = `${it.title.length}/100`;
+    c.classList.toggle('over', it.title.length > 100);
+  }
+});
+bindSegmented($('#upPrivacy'), v => { uploadOpts.privacy = v; renderUploadDialog(); });
+$('#upFirstAt').addEventListener('change', e => { uploadOpts.firstAt = e.target.value; renderUploadDialog(); });
+$('#upEvery').addEventListener('change', e => { uploadOpts.every = e.target.value; renderUploadDialog(); });
+$('#upPlaylistMode').addEventListener('change', e => { uploadOpts.playlistMode = e.target.value; renderUploadDialog(); });
+$('#upCustomPlaylist').addEventListener('input', debounce(e => { uploadOpts.customPlaylist = e.target.value; renderUploadDialog(); }, 300));
+['#uploadClose', '#uploadCancel'].forEach(s => $(s).addEventListener('click', () => $('#uploadDialog').close()));
+
+$('#uploadStart').addEventListener('click', async () => {
+  const schedule = draftSchedule();
+  const chosen = uploadDraft.filter(it => it.include);
+  const tooLong = chosen.find(it => !it.title.trim() || it.title.length > 100);
+  if (tooLong) { toast('Every title needs 1–100 characters', 'error'); return; }
+  if (uploadOpts.privacy === 'scheduled' && [...schedule.values()].some(d => !d || d.getTime() < Date.now() + 15 * 60 * 1000)) {
+    toast('Pick a first publish time at least 15 minutes from now', 'error'); return;
+  }
+  const st = yt.settings;
+  const items = chosen.map(it => ({
+    id: it.id, title: it.title.trim(), description: it.description, tags: it.tags,
+    privacy: uploadOpts.privacy === 'scheduled' ? 'private' : uploadOpts.privacy,
+    publishAt: uploadOpts.privacy === 'scheduled' ? schedule.get(it.id).toISOString() : null,
+    playlist: draftPlaylist(it), playlistPrivacy: st.playlistPrivacy,
+    categoryId: st.categoryId, madeForKids: st.madeForKids, notifySubscribers: st.notifySubscribers,
+    syntheticMedia: it.syntheticMedia,
+  }));
+  $('#uploadStart').disabled = true;
+  try {
+    const r = await api('/api/uploads', { method: 'POST', json: { items } });
+    $('#uploadDialog').close();
+    selected.clear();
+    renderLibrary();
+    toast(`${r.added} ${r.added === 1 ? 'video' : 'videos'} added to the upload queue`);
+    showView('uploads');
+  } catch (e) {
+    toast(e.message, 'error');
+    $('#uploadStart').disabled = false;
+  }
+});
+
+// ---------- YouTube: upload queue ----------
+
+let uploads = { items: [], paused: null, quota: { used: 0, limit: 10000, perUpload: 1600 } };
+let uploadsTimer = null;
+const ACTIVE = ['queued', 'uploading', 'finishing', 'waiting'];
+const STATUS_LABEL = { queued: 'Queued', uploading: 'Uploading', finishing: 'Adding to playlist', done: 'Uploaded', failed: 'Failed', cancelled: 'Cancelled', waiting: 'Waiting' };
+
+async function loadUploads() {
+  try {
+    uploads = await api('/api/uploads');
+    renderUploads();
+  } catch (e) { /* server restarting */ }
+  clearTimeout(uploadsTimer);
+  const busy = uploads.items.some(it => ['queued', 'uploading', 'finishing'].includes(it.status));
+  // Poll quickly while something is moving, slowly otherwise (only for the badge)
+  uploadsTimer = setTimeout(loadUploads, busy ? 1500 : 15000);
+}
+
+function renderYtMini() {
+  if (!yt) return;
+  const ch = yt.channel || {};
+  $('#ytMini').innerHTML = yt.connected
+    ? `${ch.thumbnail ? `<img src="${esc(ch.thumbnail)}" alt="">` : ''}<div class="grow"><b>${esc(ch.title || 'YouTube')}</b><small>Uploads go to this channel</small></div>
+       <button class="btn sm ghost" data-goto="settings">Settings</button>`
+    : `<div class="grow"><b>YouTube not connected</b><small>Connect your channel before uploading</small></div>
+       <button class="btn sm primary" data-goto="settings">Connect</button>`;
+}
+
+function renderUploads() {
+  const active = uploads.items.filter(it => ACTIVE.includes(it.status)).length;
+  $('#uploadsCount').textContent = active || '';
+  if (!$('#view-uploads').classList.contains('active')) return;
+
+  const q = uploads.quota;
+  $('#quotaBar').style.width = `${Math.min(100, (q.used / q.limit) * 100)}%`;
+  $('#quotaUsed').textContent = `${q.used.toLocaleString()} of ${q.limit.toLocaleString()} units used`;
+  const left = Math.max(0, Math.floor((q.limit - q.used) / (q.perUpload + 50)));
+  $('#quotaLeft').textContent = `≈ ${left} more upload${left === 1 ? '' : 's'} today`;
+
+  $('#uploadPaused').hidden = !uploads.paused;
+  $('#uploadPausedText').textContent = uploads.paused ? `Uploads paused: ${uploads.paused.message}` : '';
+
+  const items = [...uploads.items].sort((a, b) => (ACTIVE.includes(b.status) - ACTIVE.includes(a.status)) || b.addedAt - a.addedAt);
+  $('#uploadsEmpty').hidden = items.length > 0;
+  $('#uploadList').innerHTML = items.map(it => {
+    const lib = library.find(v => v.id === it.id);
+    const pct = it.total ? Math.round((it.sent / it.total) * 100) : 0;
+    const vis = it.publishAt ? `Scheduled ${fmtDate(it.publishAt)}` : it.privacy[0].toUpperCase() + it.privacy.slice(1);
+    return `
+    <div class="uitem ${it.id.startsWith('Shorts/') ? 'short' : ''}" data-qid="${esc(it.qid)}">
+      ${lib ? `<video class="thumb" src="${esc(lib.url)}#t=2.5" preload="metadata" muted playsinline></video>` : '<div class="thumb"></div>'}
+      <div class="info">
+        <b title="${esc(it.title)}">${esc(it.title)}</b>
+        <div class="sub">
+          <span class="ustatus ${it.status}">${STATUS_LABEL[it.status] || it.status}</span>
+          <span>${esc(vis)}</span>
+          ${it.playlist ? `<span>· ${esc(it.playlist)}</span>` : ''}
+          ${it.status === 'uploading' ? `<span>· ${fmtSize(it.sent)} of ${fmtSize(it.total)} (${pct}%)</span>` : `<span>· ${fmtSize(it.total)}</span>`}
+        </div>
+        ${it.status === 'uploading' ? `<div class="progress"><div class="bar" style="width:${pct}%"></div></div>` : ''}
+        ${it.error ? `<div class="err">${esc(it.error)}</div>` : ''}
+        ${it.warning ? `<div class="warnline">${esc(it.warning)}</div>` : ''}
+      </div>
+      <div class="btns">
+        ${it.url ? `<a class="btn sm" href="${esc(it.url)}" target="_blank" rel="noopener">Watch</a><a class="btn sm ghost" href="${esc(it.studioUrl)}" target="_blank" rel="noopener">Studio</a>` : ''}
+        ${['failed', 'cancelled'].includes(it.status) ? '<button class="btn sm" data-act="retry">Retry</button>' : ''}
+        ${['queued', 'uploading', 'waiting'].includes(it.status) ? '<button class="btn sm ghost danger-text" data-act="cancel">Cancel</button>' : ''}
+        ${['done', 'failed', 'cancelled'].includes(it.status) ? `<button class="icon-btn sm" data-act="remove" title="Remove from list" aria-label="Remove from list">${ICONS.x}</button>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+$('#uploadList').addEventListener('click', async e => {
+  const b = e.target.closest('[data-act]');
+  if (!b) return;
+  const qid = b.closest('.uitem').dataset.qid;
+  if (b.dataset.act === 'cancel' && !confirm('Cancel this upload?')) return;
+  try {
+    uploads = await api(`/api/uploads/${encodeURIComponent(qid)}/${b.dataset.act}`, { method: 'POST', json: {} });
+    renderUploads();
+    loadUploads();
+  } catch (err) { toast(err.message, 'error'); }
+});
+$('#btnResumeUploads').addEventListener('click', async () => {
+  try { uploads = await api('/api/uploads/resume', { method: 'POST', json: {} }); renderUploads(); loadUploads(); }
+  catch (e) { toast(e.message, 'error'); }
+});
+$('#btnClearUploads').addEventListener('click', async () => {
+  try { uploads = await api('/api/uploads/clear', { method: 'POST', json: {} }); renderUploads(); }
+  catch (e) { toast(e.message, 'error'); }
+});
+
 // ---------- Init ----------
 
 async function init() {
@@ -1559,9 +1971,10 @@ async function init() {
   loadVerse();
   loadLibrary();
   pollJob(true);
+  loadUploads();
 
   const view = location.hash.slice(1);
-  if (['create', 'library', 'branding', 'backgrounds'].includes(view)) showView(view);
+  if (VIEWS.includes(view)) showView(view);
 }
 
 init();
