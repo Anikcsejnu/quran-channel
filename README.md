@@ -395,6 +395,9 @@ node make-video.js --surah 1 --from 5 --still preview.png         # one frame, t
 `salamah` (Yaser Salamah), `sahl-yassin` (Sahl Yassin), `abdulkareem` (Muhammad Abdul Kareem), `matroud` (Abdullah Matroud),
 `qahtani` (Khalid Abdullah Al-Qahtani), `tablawi` (Mohammad Al-Tablawi).
 
+Muhammad Abdul Kareem's verse-1 recordings already begin with the Bismillah, so the renderer splits it off (at the quietest
+moment where his own Bismillah ends) and uses it as the Bismillah — it is never recited twice.
+
 They are lower profile than the famous imams and worth trying if your videos get copyright claims — but **no recording is
 guaranteed claim-free**. Upload a short test (e.g. Al-Ikhlas) as *Private* and look at YouTube Studio's **Checks** step before
 publishing, and get the reciter's or publisher's permission before monetising.

@@ -39,7 +39,8 @@ const RECITERS = {
   alili:                 { name: 'Aziz Alili', ea: 'aziz_alili_128kbps', group: 'lesser' },
   salamah:               { name: 'Yaser Salamah', ea: 'Yaser_Salamah_128kbps', group: 'lesser' },
   'sahl-yassin':         { name: 'Sahl Yassin', ea: 'Sahl_Yassin_128kbps', group: 'lesser' },
-  abdulkareem:           { name: 'Muhammad Abdul Kareem', ea: 'Muhammad_AbdulKareem_128kbps', group: 'lesser' },
+  // His EveryAyah recordings of verse 1 start with the Bismillah, which is split off (see splitAyah1)
+  abdulkareem:           { name: 'Muhammad Abdul Kareem', ea: 'Muhammad_AbdulKareem_128kbps', group: 'lesser', bismillahInAyah1: true },
   matroud:               { name: 'Abdullah Matroud', ea: 'Abdullah_Matroud_128kbps', group: 'lesser' },
   qahtani:               { name: 'Khalid Abdullah Al-Qahtani', ea: 'Khaalid_Abdullaah_al-Qahtaanee_192kbps', group: 'lesser' },
   tablawi:               { name: 'Mohammad Al-Tablawi', ea: 'Mohammad_al_Tablaway_128kbps', group: 'lesser' },
@@ -304,17 +305,50 @@ async function loadRecitation(surah, reciter) {
     }
     return { mode: 'qdc', mp3, timings };
   }
-  return { mode: 'ea', dir: reciter.ea };
+  return { mode: 'ea', dir: reciter.ea, bismillahInAyah1: !!reciter.bismillahInAyah1 };
 }
 
 async function verseDuration(rec, surah, num) {
   if (rec.mode === 'qdc') { const t = rec.timings.get(num); return t.to - t.from; }
-  return probeDuration(await eaFile(rec, surah, num));
+  return probeDuration(await eaVerseFile(rec, surah, num));
 }
 
 const pad3 = n => String(n).padStart(3, '0');
 const eaFile = (rec, surah, num) => download(`https://everyayah.com/data/${rec.dir}/${pad3(surah)}${pad3(num)}.mp3`,
   path.join(CACHE, 'audio', rec.dir, `${pad3(surah)}${pad3(num)}.mp3`));
+
+// Some reciters' verse-1 recordings begin with the Bismillah. Al-Fatiha (where it is verse 1) and At-Tawbah (none) excepted.
+const hasLeadingBismillah = (rec, surah, num) => rec.mode === 'ea' && rec.bismillahInAyah1 && num === 1 && surah !== 1 && surah !== 9;
+
+// Splits such a recording into { bismillah, ayah } WAV files, cut at the quietest moment where the reciter's own
+// Bismillah (verse 1:1) should end. Cached beside the downloaded file.
+async function splitAyah1(rec, surah) {
+  const src = await eaFile(rec, surah, 1);
+  const base = src.replace(/.mp3$/, '');
+  const out = { bismillah: `${base}.bismillah.wav`, ayah: `${base}.ayah.wav` };
+  if (fs.existsSync(out.bismillah) && fs.existsSync(out.ayah)) return out;
+
+  const bv = voicedIntervals(await eaFile(rec, 1, 1));
+  const bismLen = bv[bv.length - 1][1] - bv[0][0];
+  const start = voicedIntervals(src)[0][0];
+  // Short-term energy in 10 ms steps; the cut goes at its minimum in a window around the expected end
+  const x = decodePcm(src, 0, probeDuration(src));
+  const sr = ALIGN.sr, step = sr / 100, win = 3 * step;
+  const energy = i => { let q = 0; for (let k = i * step; k < i * step + win && k < x.length; k++) q += x[k] * x[k]; return q; };
+  const lo = Math.floor((start + bismLen * 0.85) * 100);
+  const hi = Math.min(Math.ceil((start + bismLen * 1.3) * 100), Math.floor((x.length - win) / step));
+  let cut = lo, best = Infinity;
+  for (let i = lo; i <= hi; i++) { const e = energy(i); if (e < best) { best = e; cut = i; } }
+  const at = ((cut * step + win / 2) / sr).toFixed(3);
+  ffmpeg(['-i', src, '-t', at, '-ar', '44100', '-ac', '2', out.bismillah]);
+  ffmpeg(['-ss', at, '-i', src, '-ar', '44100', '-ac', '2', out.ayah]);
+  return out;
+}
+const eaVerseFile = async (rec, surah, num) =>
+  (hasLeadingBismillah(rec, surah, num) ? (await splitAyah1(rec, surah)).ayah : eaFile(rec, surah, num));
+// The reciter's own Bismillah: the one recorded with this surah when there is one, otherwise Al-Fatiha 1:1
+const eaBismillahFile = async (rec, surah) =>
+  (hasLeadingBismillah(rec, surah, 1) ? (await splitAyah1(rec, surah)).bismillah : eaFile(rec, 1, 1));
 
 // ---------- Estimated word timings (reciters without published timings) ----------
 
@@ -752,8 +786,8 @@ async function buildTimeline(job, data, rec, bismillahRec, work, offset, ta, wor
       cue = { ...v, num: 0, label: '', start: t, end: t + d, segs: bt.segs.map(s => ({ i: s.i, t: t + s.t - bt.from })) };
       t += d;
     } else {
-      const f = await eaFile(bismillahRec, 1, 1);
-      const d = withTranslation ? toWav(f, 'bismillah.wav') : (parts.push(f), probeDuration(f));
+      const f = await eaBismillahFile(rec.mode === 'ea' ? rec : bismillahRec, data.surah);
+      const d = toWav(f, 'bismillah.wav');
       cue = { ...v, num: 0, label: '', start: t, end: t + d, segs: await alignedSegs(f, 1, 1, v.words, t) };
       t += d;
     }
@@ -789,8 +823,8 @@ async function buildTimeline(job, data, rec, bismillahRec, work, offset, ta, wor
     }
   } else {
     for (let n = job.from; n <= job.to; n++) {
-      const f = await eaFile(rec, data.surah, n);
-      const d = withTranslation ? toWav(f, `ayah-${n}.wav`) : (parts.push(f), probeDuration(f));
+      const f = await eaVerseFile(rec, data.surah, n);
+      const d = toWav(f, `ayah-${n}.wav`);
       const v = data.verses.get(n);
       const cue = { ...v, start: t, end: t + d, label: label(n), segs: await alignedSegs(f, data.surah, n, v.words, t) };
       t += d;
@@ -1392,6 +1426,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  splitAyah1,
   RECITERS, TRANSLATIONS, TRANSLATION_NAMES, DEFAULT_COLORS, DEFAULT_SIZES, SIZE_RANGE, FORMATS, DEFAULT_CHANNEL,
   FFMPEG, FFPROBE, MAX_REEL_CLIPS, DEFAULT_BACKGROUND, BG_LIMITS, verseFit,
   FONT_METRICS, VERSE_GAPS, REFERENCE_SIZE, WATERMARK_SIZE, emRatio, surahNameBn, buildTitle, hasWordTimings, timingKind,
