@@ -285,11 +285,10 @@ function fillSelect(el, items, value) {
 function updateReciterNote() {
   const r = meta.reciters.find(x => x.id === state.reciter);
   const note = $('#reciterNote');
-  note.textContent = (r && r.wordTimings
-    ? 'Word timings available — word-by-word highlighting supported.'
-    : 'No word timings for this reciter — highlighting will be off.')
+  note.textContent = (r && r.timing === 'exact'
+    ? 'Exact word timings from Quran.com — word-by-word highlighting supported.'
+    : 'Word timings by audio alignment — highlighting supported. The first render of a surah takes a little longer.')
     + (r && r.group === 'lesser' ? ' Lower profile, but not guaranteed claim-free: upload as Private first and check YouTube’s copyright Checks.' : '');
-  $('#optHighlight').disabled = !(r && r.wordTimings);
 }
 
 $('#reciter').addEventListener('change', e => { state.reciter = e.target.value; updateReciterNote(); saveState(); updateSummary(); invalidateFrame(); });
@@ -1528,7 +1527,7 @@ async function init() {
   const reciterGroups = { main: 'Well-known reciters', lesser: 'Lesser-known reciters — test with YouTube Checks' };
   $('#reciter').innerHTML = Object.entries(reciterGroups).map(([g, label]) => {
     const opts = meta.reciters.filter(r => r.group === g)
-      .map(r => `<option value="${esc(r.id)}">${esc(r.wordTimings ? r.name : `${r.name} (no highlighting)`)}</option>`).join('');
+      .map(r => `<option value="${esc(r.id)}">${esc(r.name)}</option>`).join('');
     return opts ? `<optgroup label="${esc(label)}">${opts}</optgroup>` : '';
   }).join('');
   if (!meta.reciters.some(r => r.id === state.reciter)) state.reciter = 'alafasy';

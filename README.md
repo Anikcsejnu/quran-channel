@@ -72,7 +72,7 @@ Work top to bottom on the left, check the result on the right, then render.
 | Step | What you set |
 |---|---|
 | **1. Passage** | Surah (search by name, meaning or number), verse range, or a quick pick (Full surah, Ayat al-Kursi, End of Al-Baqarah, Al-Kahf 1–10, Al-Mulk). |
-| **2. Recitation & translation** | Reciter (it tells you whether word timings exist), English and Bangla translation. |
+| **2. Recitation & translation** | Reciter (it tells you whether word timings are exact or aligned), English and Bangla translation. |
 | **3. Output** | **Single video** or **Short per verse**; format **Video 16:9** or **Short 9:16**; **Background** — see below. |
 | **4. Features** | Word-by-word highlight, intro card, outro card, watermark, Bismillah, and **Bangla translation audio** (see below). |
 
@@ -187,7 +187,7 @@ flowchart TD
 
 1. **Fonts** — Amiri Quran (Arabic), Poppins (English, header), Hind Siliguri (Bangla) are downloaded from Google Fonts on first run. Their metrics are read from the font files (see [Text size](#text-size-and-fitting)).
 2. **Quran data** — from the Quran.com API: each verse's Uthmani words, the chosen English and Bangla translations (footnote markers removed), juz, and surah info (Arabic name, meaning, place of revelation, summary).
-3. **Recitation** — for reciters with word timings, Quran.com's gapless **chapter audio** plus **timestamps for every verse and word**. Most reciters come from the Quran.com v4 API; Yasser ad-Dossary and Khalifah Al Tunaiji only exist in Quran.com's newer audio API (`api.qurancdn.com`), which returns the same data under different field names. Maher al-Muaiqly has no word timings anywhere, so his audio comes as one MP3 per verse from EveryAyah.com and highlighting is off.
+3. **Recitation** — for reciters with word timings, Quran.com's gapless **chapter audio** plus **timestamps for every verse and word**. Most reciters come from the Quran.com v4 API; Yasser ad-Dossary and Khalifah Al Tunaiji only exist in Quran.com's newer audio API (`api.qurancdn.com`), which returns the same data under different field names. Maher al-Muaiqly and the lesser-known reciters have no published word timings, so their audio comes as one MP3 per verse from EveryAyah.com and the word timings are worked out by [audio alignment](#word-timings-by-audio-alignment).
 4. **Timeline** — the needed part of the chapter audio is cut to WAV. If the passage starts at verse 1 (and the surah isn't Al-Fatiha or At-Tawbah), the Bismillah is taken from Al-Fatiha 1:1 and placed first. Everything starts after the intro, and the outro is added at the end.
 5. **Background** — see [Backgrounds](#backgrounds).
 6. **Captions** — an Advanced SubStation (`.ass`) subtitle file with the intro card, surah header, every verse (Arabic + English + Bangla + reference), the highlight events, the text watermark and the outro card.
@@ -222,6 +222,20 @@ Quran.com gives, for each verse, the time each word starts. Instead of one subti
 Arabic needs two details to render correctly:
 - the verse is wrapped in right-to-left embedding marks and the caption style uses libass's *whole-text layout*, so colour changes inside the line don't break word order;
 - the verse number is drawn in ornate brackets: ﴿٧﴾.
+
+#### Word timings by audio alignment
+
+For reciters without published timings (Maher al-Muaiqly and the lesser-known reciters), the renderer finds the word
+starts itself by comparing the recitation with reciters whose timings are known:
+
+1. **Reference audio** — the same verse recited by Abdur-Rahman as-Sudais and Saud ash-Shuraym, with Quran.com's exact word timings. Their chapter audio is downloaded once to `cache/audio/`.
+2. **Features** — both recordings are decoded to 16 kHz mono and turned into MFCC frames (20 ms steps), normalised per recording so voice and microphone differences matter less.
+3. **Alignment** — dynamic time warping (restricted to a band around the diagonal, to stay fast) maps every moment of the reference onto the target recording, so each known word start lands on a time in the new recitation.
+4. **Vote** — the two predictions are combined (median) and kept in order. If alignment fails, a fallback estimates the timings from silences and word lengths.
+5. **Cache** — results are saved in `cache/timings/`, so only the first render of a surah is slower.
+
+Tested against Mishary Alafasy (whose exact timings are known, but who is not a reference): mean error **0.2 s**, 74 % of
+words within 0.3 s; short ayat are usually within 0.1 s, very long ones like Ayat al-Kursi drift by up to about half a second.
 
 ### Text size and fitting
 
@@ -374,9 +388,9 @@ node make-video.js --surah 1 --from 5 --still preview.png         # one frame, t
 | `--out <file>` | output path (single video only) | `output/…` |
 | `--no-highlight` `--no-intro` `--no-outro` `--no-watermark` `--no-bismillah` | turn features off | |
 
-\* Maher al-Muaiqly has no word timings, so highlighting is off for him.
+\* Maher al-Muaiqly: word timings by [audio alignment](#word-timings-by-audio-alignment).
 
-**Lesser-known reciters** (no word highlighting; audio from EveryAyah, Hafs, 128–192 kbps):
+**Lesser-known reciters** (word highlighting by [audio alignment](#word-timings-by-audio-alignment); audio from EveryAyah, Hafs, 128–192 kbps):
 `neana` (Ahmed Neana), `alalaqimy` (Akram Al-Alaqimy), `suesy` (Ali Hajjaj Al-Suesy), `alili` (Aziz Alili),
 `salamah` (Yaser Salamah), `sahl-yassin` (Sahl Yassin), `abdulkareem` (Muhammad Abdul Kareem), `matroud` (Abdullah Matroud),
 `qahtani` (Khalid Abdullah Al-Qahtani), `tablawi` (Mohammad Al-Tablawi).
@@ -451,7 +465,8 @@ All endpoints are local only (`127.0.0.1`).
 | **"FFmpeg missing"** in the sidebar | `winget install Gyan.FFmpeg`, then restart the Studio. |
 | **Pexels: "New API key issuance is paused"** | Use Pixabay instead, or download clips by hand and use **Upload your own**. |
 | **Text on a long verse doesn't get bigger** | It already fills the screen; the note under Text size shows how much it was reduced to fit. |
-| **No word highlighting** | The reciter has no word timings (Maher al-Muaiqly), or the feature is switched off. |
+| **No word highlighting** | The feature is switched off (`--no-highlight`). |
+| **Highlight a little early/late** | Reciters without published timings use [audio alignment](#word-timings-by-audio-alignment); long ayat can be off by up to ~0.5 s. Delete `cache/timings/` to recompute. |
 | **"Azure speech error 401"** | Wrong key or region. The region is the one shown on your Speech resource (e.g. `southeastasia`). |
 | **"Missing recording: translation-audio/bn/…"** | With *My recordings*, every ayah in the range (and `001/001001.mp3` for the Bismillah) needs a file. |
 
