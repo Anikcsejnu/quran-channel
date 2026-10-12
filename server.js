@@ -12,6 +12,8 @@ const {
   surahNameBn, timingKind, TRANSLATION_VOICES, DEFAULT_TRANSLATION_AUDIO, TA_LIMITS, translationClip,
 } = require('./make-video.js');
 const { execFile } = require('child_process');
+const yt = require('./youtube.js');
+const { createQueue, DEFAULT_SETTINGS: DEFAULT_YOUTUBE, CATEGORIES, PRIVACY } = require('./upload-queue.js');
 
 const ROOT = __dirname;
 const PORT = parseInt(process.env.PORT || '4173', 10);
@@ -65,6 +67,49 @@ const readJson = async req => {
 
 const readChannel = () => (fs.existsSync(CHANNEL_FILE) ? JSON.parse(fs.readFileSync(CHANNEL_FILE, 'utf8')) : {});
 const writeChannel = ch => fs.writeFileSync(CHANNEL_FILE, JSON.stringify(ch, null, 2) + '\n', 'utf8');
+
+// ---------- YouTube ----------
+
+const uploadQueue = createQueue({ outDir: OUT, surahNameBn, log: m => console.log(`  ${m}`) });
+const youtubeSettings = () => ({ ...DEFAULT_YOUTUBE, ...(readChannel().youtube || {}) });
+// Google sends the browser back here after sign-in (loopback redirect for "Desktop app" OAuth clients)
+const REDIRECT_URI = `http://127.0.0.1:${PORT}/`;
+const LOCAL_ORIGINS = [`http://localhost:${PORT}`, `http://127.0.0.1:${PORT}`];
+
+// Endpoints that act on the YouTube channel only accept same-origin JSON requests from the Studio page
+// (stops other websites, or DNS-rebinding tricks, from uploading through it)
+function assertStudioRequest(req) {
+  const host = req.headers.host || '';
+  const origin = req.headers.origin;
+  const ok = LOCAL_ORIGINS.includes(`http://${host}`) && (!origin || LOCAL_ORIGINS.includes(origin))
+    && (req.method === 'GET' || req.method === 'DELETE' || /^application\/json\b/.test(req.headers['content-type'] || ''));
+  if (!ok) throw Object.assign(new Error('Forbidden'), { status: 403 });
+}
+
+function cleanYoutubeSettings(b) {
+  const out = { ...youtubeSettings() };
+  if (PRIVACY.includes(b.privacy)) out.privacy = b.privacy;
+  if (CATEGORIES[b.categoryId]) out.categoryId = String(b.categoryId);
+  if (['none', 'surah', 'custom'].includes(b.playlist)) out.playlist = b.playlist;
+  if ('customPlaylist' in b) out.customPlaylist = String(b.customPlaylist || '').trim().slice(0, 150);
+  if (PRIVACY.includes(b.playlistPrivacy)) out.playlistPrivacy = b.playlistPrivacy;
+  if ('notifySubscribers' in b) out.notifySubscribers = !!b.notifySubscribers;
+  if ('madeForKids' in b) out.madeForKids = !!b.madeForKids;
+  if (/^([01]\d|2[0-3]):[0-5]\d$/.test(b.scheduleTime || '')) out.scheduleTime = b.scheduleTime;
+  if ('scheduleEveryHours' in b) out.scheduleEveryHours = Math.max(1, Math.min(168, parseInt(b.scheduleEveryHours, 10) || 24));
+  if (Array.isArray(b.tags)) out.tags = yt.cleanTags(b.tags);
+  return out;
+}
+
+const escHtml = t => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const oauthPage = (ok, message, back) => `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${ok ? 'Connected' : 'Sign-in failed'}</title>
+<style>:root{color-scheme:light dark}body{font:15px/1.5 system-ui,sans-serif;display:grid;place-items:center;min-height:100vh;margin:0;padding:16px;background:#0e1714;color:#e8efe9}
+@media (prefers-color-scheme: light){body{background:#f5f7f5;color:#14211c}}
+main{max-width:420px;text-align:center}h1{font-size:20px;color:${ok ? '#3fbf8f' : '#e5484d'}}a{color:#3fbf8f}</style>
+<main><h1>${ok ? 'YouTube connected' : 'Sign-in failed'}</h1><p>${escHtml(message)}</p>
+<p><a href="${escHtml(back)}/#settings">Back to the Studio</a></p></main>
+${ok ? '<script>setTimeout(() => window.close(), 1500)</script>' : ''}`;
 
 const mediaUrl = abs => {
   for (const [name, dir] of Object.entries(MEDIA_ROOTS)) {
@@ -518,6 +563,7 @@ async function api(req, res, url) {
   if (route === 'POST /api/job/cancel') return send(res, 200, { cancelled: cancelJob() });
 
   if (route === 'GET /api/library') {
+    const uploaded = uploadQueue.uploads();
     const items = walk(OUT, n => /\.mp4$/i.test(n)).map(file => {
       const st = fs.statSync(file);
       const read = ext => { const f = file.replace(/\.mp4$/i, ext); return fs.existsSync(f) ? fs.readFileSync(f, 'utf8') : ''; };
@@ -528,6 +574,7 @@ async function api(req, res, url) {
         // output/Shorts/… (current layout) or the older *_short.mp4 / *_shorts/ names
         format: /^Shorts[\\/]|_short\.mp4$|_shorts[\\/]/i.test(rel) ? 'short' : 'long',
         title: read('.title.txt').trim(), description: read('.description.txt'),
+        youtube: uploaded[rel.split(path.sep).join('/')] || null,
       };
     }).sort((a, b) => b.modified - a.modified);
     return send(res, 200, { items });
@@ -607,6 +654,59 @@ async function api(req, res, url) {
     return send(res, 200, { job: publicJob(j) });
   }
 
+  if (url.pathname.startsWith('/api/youtube') || url.pathname.startsWith('/api/uploads')) {
+    assertStudioRequest(req);
+
+    if (route === 'GET /api/youtube') {
+      return send(res, 200, { ...yt.status(), redirectUri: REDIRECT_URI, settings: youtubeSettings(), categories: CATEGORIES, quota: yt.quotaUsed() });
+    }
+    if (route === 'POST /api/youtube/client') {
+      yt.saveClient(await readJson(req));
+      return send(res, 200, yt.status());
+    }
+    if (route === 'DELETE /api/youtube/client') {
+      await yt.disconnect().catch(() => {});
+      yt.removeClient();
+      return send(res, 200, yt.status());
+    }
+    if (route === 'POST /api/youtube/connect') {
+      const origin = LOCAL_ORIGINS.includes(req.headers.origin) ? req.headers.origin : LOCAL_ORIGINS[0];
+      return send(res, 200, { url: yt.authUrl(REDIRECT_URI, origin) });
+    }
+    if (route === 'POST /api/youtube/disconnect') {
+      await yt.disconnect();
+      return send(res, 200, yt.status());
+    }
+    if (route === 'PUT /api/youtube/settings') {
+      const ch = readChannel();
+      ch.youtube = cleanYoutubeSettings(await readJson(req));
+      writeChannel(ch);
+      return send(res, 200, { settings: ch.youtube });
+    }
+
+    if (route === 'GET /api/uploads') return send(res, 200, uploadQueue.state());
+    if (route === 'POST /api/uploads/prepare') {
+      const { ids } = await readJson(req);
+      if (!Array.isArray(ids) || !ids.length) return fail(res, 400, 'No videos selected');
+      const settings = youtubeSettings();
+      return send(res, 200, { items: ids.slice(0, 200).map(id => uploadQueue.suggest(String(id), settings)), settings });
+    }
+    if (route === 'POST /api/uploads') {
+      if (!yt.status().connected) return fail(res, 400, 'Connect your YouTube channel in Settings first');
+      const { items } = await readJson(req);
+      if (!Array.isArray(items) || !items.length) return fail(res, 400, 'No videos to upload');
+      const added = uploadQueue.add(items.slice(0, 200));
+      return send(res, 200, { added: added.length, ...uploadQueue.state() });
+    }
+    if (route === 'POST /api/uploads/resume') { uploadQueue.resume(); return send(res, 200, uploadQueue.state()); }
+    if (route === 'POST /api/uploads/clear') { uploadQueue.clearFinished(); return send(res, 200, uploadQueue.state()); }
+    const m = /^POST \/api\/uploads\/(\w+)\/(cancel|retry|remove)$/.exec(route);
+    if (m) {
+      if (!uploadQueue[m[2]](m[1])) return fail(res, 409, `Can't ${m[2]} this upload now`);
+      return send(res, 200, uploadQueue.state());
+    }
+  }
+
   return fail(res, 404, 'Unknown endpoint');
 }
 
@@ -617,6 +717,16 @@ const server = http.createServer(async (req, res) => {
   try {
     if (url.pathname.startsWith('/api/')) return await api(req, res, url);
     if (url.pathname.startsWith('/media/')) return serveFile(req, res, mediaPath(url.pathname));
+    if (url.pathname === '/' && url.searchParams.has('state') && (url.searchParams.has('code') || url.searchParams.has('error'))) {
+      const params = Object.fromEntries(url.searchParams);
+      const back = yt.returnToFor(params.state) || LOCAL_ORIGINS[0];
+      try {
+        const channel = await yt.finishAuth(params);
+        return send(res, 200, oauthPage(true, channel ? `Uploads will go to “${channel.title}”. You can close this tab.` : 'You can close this tab.', back), 'text/html; charset=utf-8');
+      } catch (e) {
+        return send(res, 400, oauthPage(false, e.message, back), 'text/html; charset=utf-8');
+      }
+    }
     const rel = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
     const file = path.resolve(UI, rel);
     if (!file.startsWith(UI + path.sep)) return fail(res, 403, 'Forbidden');
