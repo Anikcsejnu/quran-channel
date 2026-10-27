@@ -295,7 +295,7 @@ flowchart TD
 - Clips of the other shape are **centre-cropped**; the picker shows a dashed crop guide for this.
 - The reel is cached under `cache/reels/` keyed by the clips and settings, and written atomically, so a cancelled render can't leave a broken reel.
 - **Dim** darkens clips (0–90%) so captions stay readable.
-- Stock footage credits are saved in `backgrounds/credits.json` and added to the description of any video that uses those clips.
+- Stock footage credits are saved in `backgrounds/credits.json` for your records; they are not added to video descriptions.
 
 ### Batch Shorts
 
@@ -322,7 +322,7 @@ For every video:
   - Short: `Surah Al-Baqarah 2:255 | সূরা আল-বাকারা | The Cow ✨ #Shorts`
 
   YouTube allows 100 characters, so when a reciter name or verse range makes the title too long, the ending is shortened step by step (e.g. to `… | বাংলা অনুবাদ`). The Bangla name also appears in the description, as a hashtag (`#সূরা_আল_ইখলাস`) and on the intro card.
-- **`.description.txt`** — an introduction, then 📖 surah · 📍 juz and verses · 🕋 place of revelation · 🎙️ reciter · 🌐 translators, your subscribe line and handle, background credits and hashtags.
+- **`.description.txt`** — an introduction, then 📖 surah · 📍 juz and verses · 🕋 place of revelation · 🎙️ reciter · 🌐 translators, your subscribe line and handle, and hashtags.
 
 The introduction comes from **`intros.json`** — keyed by surah (`"112"`) or by an exact verse/range (`"2:255"`, `"2:285-286"`). Surahs without an entry use the short summary from Quran.com (Tafhim al-Qur'an).
 
@@ -424,6 +424,7 @@ node make-video.js --surah 1 --from 5 --still preview.png         # one frame, t
 | `--bn-rate` / `--bn-pause-ayah` / `--bn-pause-translation` | speed −40…40 % · seconds before · seconds after the translation (0–3) | 0 · 0.6 · 0.9 |
 | `--still <file.png>` | render one preview frame of the first verse instead of a video | |
 | `--out <file>` | output path (single video only) | `output/…` |
+| `--repeat` | memorization: play each ayah this many times in a row (1–10); the translation follows the last repetition | `1` |
 | `--no-highlight` `--no-intro` `--no-outro` `--no-watermark` `--no-bismillah` | turn features off | |
 
 \* Maher al-Muaiqly: word timings by [audio alignment](#word-timings-by-audio-alignment).
@@ -497,6 +498,7 @@ All endpoints are local only (`127.0.0.1`).
 | `POST /api/backgrounds/upload?orientation=&name=` | Upload a clip |
 | `POST /api/backgrounds/fetch` | Download stock footage (job) |
 | `GET /api/youtube` · `PUT /api/youtube/settings` | Connection status, upload defaults, quota · save defaults |
+| `GET /api/youtube/playlists` | Playlists on the connected channel (for the upload dialog) |
 | `POST /api/youtube/client` · `DELETE /api/youtube/client` | Save / remove the OAuth client |
 | `POST /api/youtube/connect` · `POST /api/youtube/disconnect` | Start Google sign-in (returns the URL) · sign out and revoke |
 | `POST /api/uploads/prepare` | Suggested title, description, tags and playlist for library videos |
@@ -531,6 +533,6 @@ All endpoints are local only (`127.0.0.1`).
 - Quran text, translations, recitation audio and word timings: [Quran.com API](https://api.quran.com)
 - Fallback verse audio: [EveryAyah.com](https://everyayah.com)
 - Fonts: [Amiri Quran](https://fonts.google.com/specimen/Amiri+Quran), [Hind Siliguri](https://fonts.google.com/specimen/Hind+Siliguri), [Poppins](https://fonts.google.com/specimen/Poppins) (SIL Open Font License)
-- Background footage: [Pixabay](https://pixabay.com) / [Pexels](https://www.pexels.com) — free to use; credits are added to descriptions automatically
+- Background footage: [Pixabay](https://pixabay.com) / [Pexels](https://www.pexels.com) — free to use; credits recorded in `backgrounds/credits.json`
 
 Check each reciter's and publisher's terms before monetising videos.

@@ -99,6 +99,9 @@ const SIZE_RANGE = [0.5, 2];
 const VIDEO_RE = /\.(mp4|mov|webm|mkv)$/i;
 const IMAGE_RE = /\.(jpe?g|png|webp|bmp)$/i;
 
+const REPEAT_MAX = 10;
+const REPEAT_GAP = 0.6; // seconds of silence between repetitions of an ayah
+
 const BOOL_FLAGS = new Set(['no-bismillah', 'no-highlight', 'no-intro', 'no-outro', 'no-watermark', 'batch', 'bn-audio', 'no-bn-audio']);
 
 function parseArgs() {
@@ -114,6 +117,7 @@ function parseArgs() {
   if (a['no-bismillah']) a.bismillah = false;
   if (a['no-highlight']) a.highlight = false;
   if (a.batch) a.format = 'short';
+  a.repeat = Math.max(1, Math.min(REPEAT_MAX, parseInt(a.repeat || 1, 10) || 1));
   if (!a.surah) {
     console.log(`Usage: node make-video.js --surah <1-114> [options]
   --from <n> --to <n>     verse range (default: whole surah)
@@ -136,6 +140,7 @@ function parseArgs() {
   --no-highlight          disable word-by-word Arabic highlighting
   --no-intro / --no-outro / --no-watermark
   --no-bismillah          don't prepend Bismillah audio
+  --repeat <n>            memorization: play each ayah n times in a row (1–${REPEAT_MAX}, default 1)
   --color-<name> <#hex>   ${Object.keys(DEFAULT_COLORS).join(', ')} (e.g. --color-highlight #00FFAA)
   --size-<name> <n>       text size for ${Object.keys(DEFAULT_SIZES).join(', ')}: ${SIZE_RANGE[0]}–${SIZE_RANGE[1]} (1 = 100%, e.g. --size-arabic 1.3)
   --bn-audio              read the Bangla translation aloud after each ayah (--no-bn-audio turns it off)
@@ -736,7 +741,7 @@ async function translationClip(text, surah, ayah, opts, creds = process.env) {
 
 // Builds the audio parts list + caption cues for one video. Times start at `offset` (after the intro).
 // With translation audio, each ayah is followed by a pause, its spoken Bangla translation and another pause.
-async function buildTimeline(job, data, rec, bismillahRec, work, offset, ta, wordTimings = true) {
+async function buildTimeline(job, data, rec, bismillahRec, work, offset, ta, wordTimings = true, repeat = 1) {
   const parts = [];
   const cues = [];
   const withTranslation = !!(ta && ta.enabled);
@@ -776,6 +781,25 @@ async function buildTimeline(job, data, rec, bismillahRec, work, offset, ta, wor
     t += silence(ta.pauseAfterTranslation, `pause-${id}-b.wav`);
     cue.end = t;
   };
+  // Memorization: replay the ayah just added (the last audio part) so it plays `repeat` times,
+  // each with its own caption; returns the last cue so the translation follows the final repetition.
+  // Al-Fatihah 1:1 is the Bismillah, which plays once like in every other surah.
+  const repeatAyah = (cue, n) => {
+    if (repeat < 2 || (data.surah === 1 && n === 1)) return cue;
+    const audio = parts[parts.length - 1], d = cue.end - cue.start;
+    let last = cue;
+    cue.rep = { k: 1, of: repeat };
+    for (let k = 2; k <= repeat; k++) {
+      t += silence(REPEAT_GAP, `repeat-gap-${n}-${k}.wav`);
+      const shift = t - cue.start;
+      parts.push(audio);
+      last = { ...cue, start: t, end: t + d, rep: { k, of: repeat },
+        segs: cue.segs.map(s => ({ i: s.i, t: s.t + shift })) };
+      cues.push(last);
+      t += d;
+    }
+    return last;
+  };
 
   if (job.bismillah) {
     const v = data.bismillahVerse;
@@ -796,7 +820,7 @@ async function buildTimeline(job, data, rec, bismillahRec, work, offset, ta, wor
   }
 
   const label = n => `${data.chapter.name_simple} ${data.surah}:${n}`;
-  if (rec.mode === 'qdc' && !withTranslation) {
+  if (rec.mode === 'qdc' && !withTranslation && repeat < 2) {
     // Recitation only: one continuous cut keeps the reciter's natural flow between ayat
     const T0 = rec.timings.get(job.from).from;
     const T1 = rec.timings.get(job.to).to;
@@ -819,7 +843,7 @@ async function buildTimeline(job, data, rec, bismillahRec, work, offset, ta, wor
         segs: vt.segs.map(s => ({ i: s.i, t: Math.max(start, start + s.t - vt.from) })) };
       t += d;
       cues.push(cue);
-      await addTranslation(cue, data.surah, n, n);
+      await addTranslation(repeatAyah(cue, n), data.surah, n, n);
     }
   } else {
     for (let n = job.from; n <= job.to; n++) {
@@ -829,7 +853,7 @@ async function buildTimeline(job, data, rec, bismillahRec, work, offset, ta, wor
       const cue = { ...v, start: t, end: t + d, label: label(n), segs: await alignedSegs(f, data.surah, n, v.words, t) };
       t += d;
       cues.push(cue);
-      await addTranslation(cue, data.surah, n, n);
+      await addTranslation(repeatAyah(cue, n), data.surah, n, n);
       const done = n - job.from + 1, count = job.to - job.from + 1;
       if (wordTimings && count > 10 && (done % 10 === 0 || done === count)) console.log(`  word timings ${done}/${count}`);
     }
@@ -914,6 +938,7 @@ const ARABIC_MARKS = /[ؐ-ًؚ-ٰٟۖ-ۭ࣓-ࣿ]/g;
 const VERSE_GAPS = { afterArabic: 24, afterEnglish: 14, beforeReference: 20 };
 const REFERENCE_SIZE = 28;
 const WATERMARK_SIZE = 22;
+const REPEAT_BADGE_SIZE = 24;
 
 // Font size multiplier for a verse. Estimates how many lines each language wraps to and shrinks only
 // when the whole block would not fit on screen, so the chosen text sizes are kept whenever there is room.
@@ -994,6 +1019,7 @@ Style: Verse,Poppins,${fmt.en},&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,0,0,0
 Style: Header,Poppins SemiBold,${Math.round(fmt.header * emRatio().latin)},&H00C8E6FF,&H00FFFFFF,&H00000000,&H80000000,0,0,0,0,100,100,1,0,1,1.5,1,8,40,40,${Math.round(h * 0.05)},1
 Style: Card,Poppins,40,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,2,5,${fmt.margin},${fmt.margin},0,1
 Style: Watermark,Poppins SemiBold,${Math.round(u(WATERMARK_SIZE) * emRatio().latin)},&H60FFFFFF,&H00FFFFFF,&H90000000,&H00000000,0,0,0,0,100,100,1,0,1,1,0,3,36,36,32,1
+Style: Badge,Poppins SemiBold,${Math.round(u(REPEAT_BADGE_SIZE) * emRatio().latin)},&H00FFFFFF,&H00FFFFFF,&H60000000,&H00000000,0,0,0,0,100,100,2,0,3,${u(12)},0,9,${u(40)},${u(40)},${u(36)},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -1025,6 +1051,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
   for (const c of cues) {
     for (const e of verseEvents(c, fmt, highlight, col, sizes)) add(1, e.start, Math.min(e.end, versesEnd), 'Verse', e.text);
+    // Memorization: corner badge counting the repetitions of this ayah
+    if (c.rep) add(3, c.start, c.ayahEnd || c.end, 'Badge', `{\\fad(150,150)}REPEAT  {\\c${col.highlight}}${c.rep.k} / ${c.rep.of}`);
   }
 
   if (outro > 0) {
@@ -1179,13 +1207,14 @@ async function renderVideo(job, ctx) {
   const intro = args['no-intro'] ? 0 : channel.intro[args.format];
   const outro = args['no-outro'] ? 0 : channel.outro[args.format];
   const watermark = !args['no-watermark'];
-  const tag = `${pad3(data.surah)}_${job.from}-${job.to}_${args.reciter}_${args.format}`;
+  const rep = args.repeat > 1 ? `_x${args.repeat}` : '';
+  const tag = `${pad3(data.surah)}_${job.from}-${job.to}_${args.reciter}_${args.format}${rep}`;
   const work = path.join(CACHE, 'work', tag);
   fs.mkdirSync(work, { recursive: true });
 
   // Preview stills never need the spoken translation (and shouldn't spend speech credits)
   const ta = args.still ? null : ctx.translationAudio;
-  const { parts, cues, audioEnd } = await buildTimeline(job, data, rec, bismillahRec, work, intro, ta, args.highlight);
+  const { parts, cues, audioEnd } = await buildTimeline(job, data, rec, bismillahRec, work, intro, ta, args.highlight, args.repeat);
   const total = audioEnd + outro;
   const highlight = args.highlight;
 
@@ -1210,8 +1239,9 @@ async function renderVideo(job, ctx) {
   } else {
     const level = (1 - bo.dim).toFixed(3);
     inputs.push(...(bg.type === 'image' ? ['-loop', '1', '-framerate', '30'] : ['-stream_loop', '-1']), '-i', bg.file);
-    graph.push(`[0:v]scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},fps=30,` +
-      `colorlevels=romax=${level}:gomax=${level}:bomax=${level},vignette=PI/5,setsar=1[bg]`);
+    // Dim before crop: ffmpeg 9 segfaults on crop → fps → colorlevels when the crop actually trims
+    graph.push(`[0:v]colorlevels=romax=${level}:gomax=${level}:bomax=${level},` +
+      `scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},fps=30,vignette=PI/5,setsar=1[bg]`);
   }
   inputs.push('-f', 'concat', '-safe', '0', '-i', 'list.txt');
 
@@ -1241,7 +1271,7 @@ async function renderVideo(job, ctx) {
   graph.push(`[${vLabel}]${shift}subtitles=subs.ass:fontsdir=fonts,format=yuv420p[v]`);
 
   const outFile = path.resolve(job.out || path.join(surahFolder(data, args.format === 'short'),
-    `${pad3(data.surah)}_${job.from}-${job.to}_${args.reciter}.mp4`));
+    `${pad3(data.surah)}_${job.from}-${job.to}_${args.reciter}${rep}.mp4`));
   fs.mkdirSync(path.dirname(outFile), { recursive: true });
 
   if (args.still) {
@@ -1276,7 +1306,7 @@ function surahIntro(data, job) {
 }
 
 function writeDescription(outFile, job, ctx) {
-  const { data, args, reciter, channel, background } = ctx;
+  const { data, args, reciter, channel } = ctx;
   const { chapter } = data;
   const whole = job.from === 1 && job.to === chapter.verses_count;
   const ref = job.from === job.to ? `${data.surah}:${job.from}` : `${data.surah}:${job.from}-${job.to}`;
@@ -1284,13 +1314,6 @@ function writeDescription(outFile, job, ctx) {
   const place = chapter.revelation_place === 'madinah' ? 'Madinah (Madani)' : 'Makkah (Makki)';
   const surahName = `${chapter.name_simple} (${chapter.translated_name.name})`;
   const bnName = `সূরা ${chapter.name_bn}`;
-
-  const credits = [];
-  const creditsFile = path.join(ROOT, 'backgrounds', 'credits.json');
-  if (background.used && fs.existsSync(creditsFile)) {
-    const map = JSON.parse(fs.readFileSync(creditsFile, 'utf8'));
-    for (const f of background.used) if (map[path.basename(f)]) credits.push(map[path.basename(f)]);
-  }
 
   const intro = surahIntro(data, job);
   const desc = [
@@ -1303,6 +1326,7 @@ function writeDescription(outFile, job, ctx) {
     '',
     `🎙️ Reciter: ${reciter.name}`,
     '',
+    ...(args.repeat > 1 ? [`🔁 Memorization: each ayah is recited ${args.repeat} times`, ''] : []),
     `🌐 Translations: English — ${TRANSLATION_NAMES[args.en] || args.en} · Bangla — ${TRANSLATION_NAMES[args.bn] || args.bn}`,
     ...(ctx.translationAudio.enabled ? ['', translationAudioCredit(ctx.translationAudio)] : []),
     '',
@@ -1310,7 +1334,6 @@ function writeDescription(outFile, job, ctx) {
     ...(channel.handle ? [`👉 ${channel.handle}`] : []),
     '',
     'Text, translations & recitation timing: Quran.com',
-    ...(credits.length ? ['', '🎬 Background footage:', ...credits] : []),
     '',
     [
       '#Quran', `#Surah${chapter.name_simple.replace(/[^A-Za-z]/g, '')}`, `#${bnName.replace(/[\s-]+/g, '_')}`, '#QuranRecitation',
@@ -1320,7 +1343,7 @@ function writeDescription(outFile, job, ctx) {
   ].join('\n');
   fs.writeFileSync(outFile.replace(/\.mp4$/, '.description.txt'), desc, 'utf8');
 
-  fs.writeFileSync(outFile.replace(/\.mp4$/, '.title.txt'), buildTitle({ chapter, ref, whole, reciter, short: args.format === 'short' }), 'utf8');
+  fs.writeFileSync(outFile.replace(/\.mp4$/, '.title.txt'), buildTitle({ chapter, ref, whole, reciter, short: args.format === 'short', repeat: args.repeat }), 'utf8');
 }
 
 // Description line naming the translation narrator; synthetic voices are disclosed as such
@@ -1333,10 +1356,10 @@ function translationAudioCredit(ta) {
 
 // English + Bangla surah name so the video is found by searches in either language.
 // YouTube allows 100 characters: the first candidate that fits is used, dropping the least important parts.
-function buildTitle({ chapter, ref, whole, reciter, short }) {
+function buildTitle({ chapter, ref, whole, reciter, short, repeat = 1 }) {
   const en = `Surah ${chapter.name_simple}`;
   const bn = `সূরা ${chapter.name_bn}`;
-  const verses = whole ? '' : ` ${ref}`;
+  const verses = (whole ? '' : ` ${ref}`) + (repeat > 1 ? ` | Memorize ×${repeat}` : '');
   const candidates = short
     ? [
       `${en}${verses} | ${bn} | ${chapter.translated_name.name} ✨ #Shorts`,
@@ -1408,7 +1431,7 @@ async function main() {
       if (dur >= minSec || n === to) { jobs.push(cur); cur = null; }
     }
     const dir = surahFolder(data, true);
-    jobs.forEach(j => { j.out = path.join(dir, `${pad3(surah)}_${j.from === j.to ? j.from : `${j.from}-${j.to}`}_${args.reciter}.mp4`); });
+    jobs.forEach(j => { j.out = path.join(dir, `${pad3(surah)}_${j.from === j.to ? j.from : `${j.from}-${j.to}`}_${args.reciter}${args.repeat > 1 ? `_x${args.repeat}` : ''}.mp4`); });
     console.log(`• Batch: ${jobs.length} Shorts → ${dir}`);
   } else {
     jobs = [{ from, to, bismillah: needsBismillah && from === 1, out: args.out }];
@@ -1428,7 +1451,7 @@ if (require.main === module) {
 module.exports = {
   splitAyah1,
   RECITERS, TRANSLATIONS, TRANSLATION_NAMES, DEFAULT_COLORS, DEFAULT_SIZES, SIZE_RANGE, FORMATS, DEFAULT_CHANNEL,
-  FFMPEG, FFPROBE, MAX_REEL_CLIPS, DEFAULT_BACKGROUND, BG_LIMITS, verseFit,
+  FFMPEG, FFPROBE, MAX_REEL_CLIPS, REPEAT_MAX, DEFAULT_BACKGROUND, BG_LIMITS, verseFit,
   FONT_METRICS, VERSE_GAPS, REFERENCE_SIZE, WATERMARK_SIZE, emRatio, surahNameBn, buildTitle, hasWordTimings, timingKind,
   wordStartsFor,
   TRANSLATION_VOICES, DEFAULT_TRANSLATION_AUDIO, TA_LIMITS, translationClip, estimateWordStarts, voicedIntervals,

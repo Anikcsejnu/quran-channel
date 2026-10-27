@@ -23,5 +23,26 @@
     "arabic": 1.4,
     "english": 1.1,
     "bangla": 1.25
+  },
+  "youtube": {
+    "privacy": "public",
+    "categoryId": "27",
+    "playlist": "custom",
+    "customPlaylist": "Quran Shorts | آيات من القرآن الكريم",
+    "playlistPrivacy": "public",
+    "notifySubscribers": true,
+    "madeForKids": false,
+    "scheduleTime": "18:00",
+    "scheduleEveryHours": 24,
+    "tags": [
+      "Quran",
+      "Quran recitation",
+      "Holy Quran",
+      "Quran with translation",
+      "কুরআন",
+      "কুরআন তিলাওয়াত",
+      "বাংলা অনুবাদ",
+      "القرآن الكريم"
+    ]
   }
 }

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Downloads royalty-free background videos into ./backgrounds/<landscape|portrait>/
-// and records attribution in ./backgrounds/credits.json (used in the YouTube descriptions).
+// and records attribution in ./backgrounds/credits.json.
 //
 // Providers (free API keys):
 //   Pixabay  https://pixabay.com/api/docs/   → PIXABAY_API_KEY   (default)

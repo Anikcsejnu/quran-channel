@@ -117,7 +117,7 @@ let highlightIndex = -1;
 const state = Object.assign({
   surah: 1, from: 1, to: 7,
   reciter: 'alafasy', en: 'saheeh', bn: 'taisirul',
-  mode: 'single', format: 'long', groupSeconds: 0, bgMode: 'auto', bgSelection: [], bgOptions: null,
+  mode: 'single', format: 'long', groupSeconds: 0, repeat: 1, bgMode: 'auto', bgSelection: [], bgOptions: null,
   translationAudio: null,
   highlight: true, intro: true, outro: true, watermark: true, bismillah: true,
   colors: null, sizes: null, preview: 'live',
@@ -133,6 +133,7 @@ function payload() {
     surah: state.surah, from: state.from, to: state.to,
     reciter: state.reciter, en: state.en, bn: state.bn,
     format: effectiveFormat(), batch: state.mode === 'batch', groupSeconds: state.groupSeconds,
+    repeat: state.repeat,
     highlight: state.highlight, intro: state.intro, outro: state.outro,
     watermark: state.watermark, bismillah: state.bismillah,
     bg: state.bgMode === 'custom' ? state.bgSelection : state.bgMode,
@@ -303,6 +304,11 @@ $('#bnTr').addEventListener('change', e => { state.bn = e.target.value; saveStat
 bindSegmented($('#modeSeg'), v => { state.mode = v; applyMode(); });
 bindSegmented($('#formatSeg'), v => { state.format = v; applyMode(); });
 $('#groupSeconds').addEventListener('change', e => { state.groupSeconds = Math.max(0, Math.min(170, +e.target.value || 0)); saveState(); updateSummary(); });
+$('#repeatCount').addEventListener('change', e => {
+  state.repeat = Math.max(1, Math.min(10, Math.round(+e.target.value) || 1));
+  e.target.value = state.repeat;
+  saveState(); updateSummary();
+});
 function applyMode() {
   const batch = state.mode === 'batch';
   $('#groupField').hidden = !batch;
@@ -637,12 +643,19 @@ function renderStageBackground() {
   if (holder.dataset.id !== first.id) {
     holder.dataset.id = first.id;
     holder.innerHTML = first.type === 'video'
-      ? `<video src="${esc(first.url)}" poster="${esc(first.thumb)}" muted loop autoplay playsinline preload="metadata"></video>`
+      ? `<video src="${esc(first.url)}" poster="${esc(first.thumb)}" muted loop playsinline preload="metadata"></video>`
       : `<img src="${esc(first.url)}" alt="">`;
   }
   const media = holder.firstElementChild;
   if (media) media.style.filter = `brightness(${(1 - state.bgOptions.dim).toFixed(2)})`;
 }
+
+// Play the stage clip only while hovered, to save CPU/RAM
+$('#stageLive').addEventListener('mouseenter', () => $('#stageBg video')?.play().catch(() => {}));
+$('#stageLive').addEventListener('mouseleave', () => $('#stageBg video')?.pause());
+
+// Newest download first
+const newestFirst = list => [...list].sort((a, b) => b.modified - a.modified);
 
 // ---------- Background picker ----------
 
@@ -666,7 +679,7 @@ function openPicker() {
 
 function pickerItems() {
   const o = orientationFor(effectiveFormat());
-  return backgrounds.filter(b => (pickerFilter === 'all' || b.orientation === o) && (pickerType === 'any' || b.type === pickerType));
+  return newestFirst(backgrounds).filter(b => (pickerFilter === 'all' || b.orientation === o) && (pickerType === 'any' || b.type === pickerType));
 }
 
 function renderPicker() {
@@ -923,7 +936,8 @@ function updateSummary() {
     ? (state.groupSeconds ? `Up to ${count} Shorts (≥ ${state.groupSeconds}s each)` : `${count} Short${count > 1 ? 's' : ''}, one per verse`)
     : effectiveFormat() === 'short' ? 'Short · 9:16' : 'Video · 16:9';
   const bnAudio = state.translationAudio && state.translationAudio.enabled ? ' · + Bangla audio' : '';
-  $('#renderSub').textContent = `${what} · ${r ? r.name : ''}${bnAudio}`;
+  const rep = state.repeat > 1 ? ` · each verse ×${state.repeat}` : '';
+  $('#renderSub').textContent = `${what} · ${r ? r.name : ''}${rep}${bnAudio}`;
 }
 
 // ---------- Colours ----------
@@ -1457,7 +1471,7 @@ async function loadBackgrounds() {
 }
 
 function renderClips() {
-  const items = backgrounds.filter(b => b.orientation === bgFilter);
+  const items = newestFirst(backgrounds).filter(b => b.orientation === bgFilter);
   $('#clipEmpty').hidden = items.length > 0;
   $('#clipGrid').innerHTML = items.map(b => `
     <div class="clip ${b.orientation}" data-id="${esc(b.id)}">
@@ -1470,7 +1484,11 @@ function renderClips() {
 }
 
 $('#clipGrid').addEventListener('mouseover', e => { const v = e.target.closest('.clip')?.querySelector('video'); if (v) v.play().catch(() => {}); });
-$('#clipGrid').addEventListener('mouseout', e => { const v = e.target.closest('.clip')?.querySelector('video'); if (v && !e.relatedTarget?.closest?.('.clip')) v.pause(); });
+$('#clipGrid').addEventListener('mouseout', e => {
+  const clip = e.target.closest('.clip');
+  // Pause unless the pointer is still inside the same clip (moving to another clip used to leave this one playing)
+  if (clip && !clip.contains(e.relatedTarget)) clip.querySelector('video')?.pause();
+});
 $('#clipGrid').addEventListener('click', async e => {
   if (!e.target.closest('[data-del]')) return;
   const id = e.target.closest('.clip').dataset.id;
@@ -1704,10 +1722,26 @@ async function openUploadDialog(ids) {
   $('#upCustomPlaylist').value = uploadOpts.customPlaylist;
   renderUploadDialog();
   $('#uploadDialog').showModal();
+  loadChannelPlaylists();
+}
+
+// Existing playlists on the channel, offered as "pl:<title>" options (uploads match playlists by title)
+async function loadChannelPlaylists() {
+  const group = $('#upChannelPlaylists');
+  group.label = "Loading your channel's playlists…";
+  group.innerHTML = '';
+  try {
+    const { items } = await api('/api/youtube/playlists');
+    group.label = items.length ? "Your channel's playlists" : 'No playlists on your channel yet';
+    group.innerHTML = items.map(p => `<option value="pl:${esc(p.title)}">${esc(p.title)}${p.count != null ? ` (${p.count})` : ''}</option>`).join('');
+  } catch (e) {
+    group.label = `Couldn't load playlists: ${e.message}`;
+  }
 }
 
 const draftPlaylist = it => (uploadOpts.playlistMode === 'surah' ? it.surahPlaylist
-  : uploadOpts.playlistMode === 'custom' ? uploadOpts.customPlaylist.trim() : '');
+  : uploadOpts.playlistMode === 'custom' ? uploadOpts.customPlaylist.trim()
+  : uploadOpts.playlistMode.startsWith('pl:') ? uploadOpts.playlistMode.slice(3) : '');
 function draftSchedule() {
   if (uploadOpts.privacy !== 'scheduled') return new Map();
   const first = new Date(uploadOpts.firstAt);
@@ -1950,6 +1984,7 @@ async function init() {
 
   for (const [id, key] of Object.entries(TOGGLES)) $(`#${id}`).checked = state[key];
   $('#groupSeconds').value = state.groupSeconds;
+  $('#repeatCount').value = state.repeat;
   setSegmented($('#modeSeg'), state.mode);
 
   fillBranding();

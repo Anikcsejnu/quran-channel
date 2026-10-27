@@ -227,6 +227,23 @@ function quotaUsed() {
 // ---------- playlists ----------
 
 const playlistCache = new Map();
+
+// Every playlist on the connected channel, for the upload dialog
+async function listPlaylists() {
+  const out = [];
+  let pageToken;
+  do {
+    const page = await api('GET', '/playlists', { query: { part: 'snippet,contentDetails', mine: 'true', maxResults: '50', ...(pageToken ? { pageToken } : {}) } });
+    noteQuota(QUOTA.playlistList);
+    for (const p of page.items || []) {
+      playlistCache.set(p.snippet.title, p.id);
+      out.push({ id: p.id, title: p.snippet.title, count: p.contentDetails ? p.contentDetails.itemCount : null });
+    }
+    pageToken = page.nextPageToken;
+  } while (pageToken);
+  return out.sort((a, b) => a.title.localeCompare(b.title));
+}
+
 async function ensurePlaylist(title, description = '', privacyStatus = 'public') {
   title = title.slice(0, 150);
   if (playlistCache.has(title)) return playlistCache.get(title);
@@ -404,5 +421,5 @@ async function uploadVideo(file, meta, { resume, onSession, onProgress, signal }
 module.exports = {
   CONFIG_FILE, QUOTA, DAILY_QUOTA, YouTubeError,
   status, saveClient, removeClient, authUrl, returnToFor, finishAuth, disconnect,
-  uploadVideo, ensurePlaylist, addToPlaylist, quotaUsed, cleanTags,
+  uploadVideo, listPlaylists, ensurePlaylist, addToPlaylist, quotaUsed, cleanTags,
 };

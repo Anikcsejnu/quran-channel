@@ -161,6 +161,10 @@
               <p class="field-note">0 = exactly one Short per verse.</p>
             </div>
 
+            <label class="label" for="repeatCount">Repeat each verse (memorization)</label>
+            <div class="input-suffix"><input type="number" id="repeatCount" min="1" max="10" value="1"><span>times</span></div>
+            <p class="field-note">1 = normal recitation. 3 plays every ayah three times in a row, to help memorize it.</p>
+
             <label class="label">Background <span class="hint" id="bgHint"></span></label>
             <div class="segmented" id="bgModeSeg">
               <button data-value="auto" class="active">
@@ -828,6 +832,7 @@
         <option value="none">None</option>
         <option value="surah">One per surah</option>
         <option value="custom">Custom…</option>
+        <optgroup label="Loading your channel's playlists…" id="upChannelPlaylists"></optgroup>
       </select>
       <input id="upCustomPlaylist" placeholder="Playlist name" maxlength="150" hidden>
     </div>

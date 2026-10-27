@@ -8,7 +8,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 const {
   RECITERS, TRANSLATIONS, TRANSLATION_NAMES, DEFAULT_COLORS, DEFAULT_SIZES, SIZE_RANGE, DEFAULT_CHANNEL,
-  FFMPEG, FFPROBE, MAX_REEL_CLIPS, DEFAULT_BACKGROUND, BG_LIMITS, FORMATS, FONT_METRICS, VERSE_GAPS, REFERENCE_SIZE, WATERMARK_SIZE, emRatio,
+  FFMPEG, FFPROBE, MAX_REEL_CLIPS, REPEAT_MAX, DEFAULT_BACKGROUND, BG_LIMITS, FORMATS, FONT_METRICS, VERSE_GAPS, REFERENCE_SIZE, WATERMARK_SIZE, emRatio,
   surahNameBn, timingKind, TRANSLATION_VOICES, DEFAULT_TRANSLATION_AUDIO, TA_LIMITS, translationClip,
 } = require('./make-video.js');
 const { execFile } = require('child_process');
@@ -377,6 +377,7 @@ function buildArgs(o) {
     a.push('--batch');
     if (o.groupSeconds) a.push('--group-seconds', intIn(o.groupSeconds, 0, 170, 'Group seconds'));
   }
+  if (o.repeat > 1) a.push('--repeat', intIn(o.repeat, 1, REPEAT_MAX, 'Repeat'));
   if (o.highlight === false) a.push('--no-highlight');
   if (o.intro === false) a.push('--no-intro');
   if (o.outro === false) a.push('--no-outro');
@@ -676,6 +677,10 @@ async function api(req, res, url) {
     if (route === 'POST /api/youtube/disconnect') {
       await yt.disconnect();
       return send(res, 200, yt.status());
+    }
+    if (route === 'GET /api/youtube/playlists') {
+      if (!yt.status().connected) return fail(res, 400, 'Connect your YouTube channel in Settings first');
+      return send(res, 200, { items: await yt.listPlaylists() });
     }
     if (route === 'PUT /api/youtube/settings') {
       const ch = readChannel();
