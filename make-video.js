@@ -1112,7 +1112,7 @@ function resolveBackground(bgArg, fmt, rotate, opts) {
       const bad = files.find(f => !VIDEO_RE.test(f) && !IMAGE_RE.test(f));
       if (bad) throw new Error(`Not an image or video: ${bad}`);
       const used = files.slice(0, MAX_REEL_CLIPS);
-      return { type: 'video', file: buildReel(used, fmt, opts), used };
+      return { type: 'video', file: buildReel(used, fmt, opts), used, baked: true };
     }
     bgArg = bgArg[0];
   }
@@ -1152,7 +1152,7 @@ function resolveBackground(bgArg, fmt, rotate, opts) {
   }
   files = files.slice(0, opts.max);
   if (files.length === 1) return resolveBackground(files[0], fmt, 0, opts);
-  return { type: 'video', file: buildReel(files, fmt, opts), used: files };
+  return { type: 'video', file: buildReel(files, fmt, opts), used: files, baked: true };
 }
 
 function buildReel(files, fmt, opts) {
@@ -1160,7 +1160,7 @@ function buildReel(files, fmt, opts) {
   const CLIP = opts.clipSeconds;
   const FADE = Math.min(1.2, CLIP / 4);
   const key = require('crypto').createHash('md5')
-    .update(files.map(f => f + fs.statSync(f).size).join('|') + w + h + CLIP).digest('hex').slice(0, 10);
+    .update(files.map(f => f + fs.statSync(f).size).join('|') + w + h + CLIP + `dim${opts.dim}`).digest('hex').slice(0, 10);
   const out = path.join(CACHE, 'reels', `reel-${fmt.orientation}-${key}.mp4`);
   if (fs.existsSync(out)) return out;
   console.log(`• Building background reel from ${files.length} clips`);
@@ -1194,7 +1194,10 @@ function buildReel(files, fmt, opts) {
     prev = label;
     acc = offset + lens[i];
   }
-  ffmpeg([...inputs, '-filter_complex', chains.join(';'), '-map', '[out]', '-an',
+  // Dim and vignette are baked in once here, so renders that loop the reel don't redo them on every frame
+  const level = (1 - opts.dim).toFixed(3);
+  chains.push(`[out]colorlevels=romax=${level}:gomax=${level}:bomax=${level},vignette=PI/5,format=yuv420p[final]`);
+  ffmpeg([...inputs, '-filter_complex', chains.join(';'), '-map', '[final]', '-an',
     '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p', tmp]);
   fs.renameSync(tmp, out);
   return out;
@@ -1236,6 +1239,10 @@ async function renderVideo(job, ctx) {
     const speed = (bo.gradientSpeed * 0.002).toFixed(4);
     inputs.push('-f', 'lavfi', '-i', `gradients=s=${w}x${h}:${cols}:n=${bo.gradient.length}:speed=${speed}:r=30`);
     graph.push(`[0:v]vignette=PI/4,setsar=1[bg]`);
+  } else if (bg.baked) {
+    // Reel is already sized, dimmed and vignetted
+    inputs.push('-stream_loop', '-1', '-i', bg.file);
+    graph.push(`[0:v]setsar=1[bg]`);
   } else {
     const level = (1 - bo.dim).toFixed(3);
     inputs.push(...(bg.type === 'image' ? ['-loop', '1', '-framerate', '30'] : ['-stream_loop', '-1']), '-i', bg.file);
